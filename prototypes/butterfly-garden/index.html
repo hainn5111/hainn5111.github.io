@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Butterfly Garden - Prototype</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #f6efe0; touch-action: none; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
+  canvas { display: block; touch-action: none; }
+
+  #hud {
+    position: fixed; top: 0; left: 0; right: 0;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 16px; pointer-events: none;
+    color: #5b4636; text-shadow: 0 1px 2px rgba(255,255,255,0.8);
+    font-size: 15px; font-weight: 600;
+  }
+
+  #levelSelect {
+    position: fixed; bottom: 14px; left: 0; right: 0;
+    display: flex; justify-content: center; gap: 10px;
+  }
+  #levelSelect button {
+    border: none; border-radius: 20px; padding: 10px 18px;
+    background: rgba(255,255,255,0.85); color: #5b4636;
+    font-size: 14px; font-weight: 600; box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+  #levelSelect button.dangChon { background: #d98e5b; color: #fff; }
+
+  #thongBao {
+    position: fixed; top: 46%; left: 50%; transform: translate(-50%, -50%);
+    background: rgba(255,255,255,0.92); padding: 18px 26px; border-radius: 16px;
+    color: #5b4636; font-size: 18px; font-weight: 700; text-align: center;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2); display: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="hud">
+  <div id="hudDau">0 / 0 đã đậu</div>
+  <div id="hudVuot">Vuốt: 0</div>
+</div>
+<div id="levelSelect">
+  <button data-level="1">Dễ</button>
+  <button data-level="2">Khó</button>
+  <button data-level="3">Siêu khó</button>
+</div>
+<div id="thongBao"></div>
+
+<script>
+/* ============================================================
+   BUTTERFLY GARDEN - prototype test cơ chế (chưa polish visual)
+   Toàn bộ vật lý ở đây chỉ là số liệu tạm, việc chỉnh hệ số
+   (HE_SO_*) là quy trình iterate bình thường sau khi playtest.
+   ============================================================ */
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const hudDau = document.getElementById('hudDau');
+const hudVuot = document.getElementById('hudVuot');
+const thongBao = document.getElementById('thongBao');
+
+let W = 0, H = 0; // kích thước canvas theo CSS px (đã trừ devicePixelRatio)
+
+function chinhKichThuoc() {
+  const dpr = window.devicePixelRatio || 1;
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', chinhKichThuoc);
+chinhKichThuoc();
+
+// ---------- Vector 2D: chỉ dùng {x,y} thường, có hàm hỗ trợ ----------
+const V = {
+  cong: (a, b) => ({ x: a.x + b.x, y: a.y + b.y }),
+  tru: (a, b) => ({ x: a.x - b.x, y: a.y - b.y }),
+  nhan: (a, k) => ({ x: a.x * k, y: a.y * k }),
+  doDai: (a) => Math.hypot(a.x, a.y),
+  chuanHoa: (a) => {
+    const d = Math.hypot(a.x, a.y);
+    return d < 1e-6 ? { x: 0, y: 0 } : { x: a.x / d, y: a.y / d };
+  },
+  // xoay vector 90 độ -> dùng để tạo lực xoáy (vuông góc với hướng ra tâm)
+  vuongGoc: (a) => ({ x: -a.y, y: a.x }),
+};
+
+function gioiHan(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+// ============================================================
+// MÀU SẮC theo tên tiếng Việt không dấu để tránh rắc rối encoding
+// ============================================================
+const MAU = {
+  cam: '#ff9a52',
+  tim: '#a06cd5',
+  hong: '#ff6f9c',
+};
+
+// ============================================================
+// CẤU HÌNH TỪNG LEVEL
+// wind: gió nền — hoặc vector cố định, hoặc dao động (level 3)
+// ============================================================
+function taoZone(mau, rx, ry, rr) {
+  // rx, ry, rr là tỉ lệ theo W/H (0..1) để responsive khi resize
+  return { mau, rx, ry, rr };
+}
+
+const CAU_HINH_LEVEL = {
+  1: {
+    ten: 'Dễ',
+    soCanh: 3,
+    dsButterflyMau: ['cam', 'cam', 'cam'],
+    vungHoa: [taoZone('cam', 0.5, 0.5, 0.16)],
+    gio: { kieu: 'tinh', vector: { x: 6, y: 2 } }, // gió nhẹ
+  },
+  2: {
+    ten: 'Khó',
+    soCanh: 4,
+    dsButterflyMau: ['cam', 'cam', 'tim', 'tim'],
+    vungHoa: [taoZone('cam', 0.18, 0.18, 0.15), taoZone('tim', 0.82, 0.82, 0.15)],
+    gio: { kieu: 'tinh', vector: { x: 18, y: -14 } }, // crosswind mạnh hơn
+  },
+  3: {
+    ten: 'Siêu khó',
+    soCanh: 6,
+    dsButterflyMau: ['cam', 'cam', 'tim', 'tim', 'hong', 'hong'],
+    vungHoa: [
+      taoZone('cam', 0.2, 0.2, 0.13),
+      taoZone('tim', 0.8, 0.2, 0.13),
+      taoZone('hong', 0.5, 0.85, 0.13),
+    ],
+    // gió dao động hướng liên tục -> khó đoán hơn
+    gio: { kieu: 'daoDong', bienDo: 26, tanSo: 0.35 },
+  },
+};
+
+// ============================================================
+// TRẠNG THÁI GAME
+// ============================================================
+const state = {
+  level: 1,
+  thoiGian: 0,
+  soVuot: 0,
+  buom: [],       // danh sách bướm
+  luongGio: [],   // các "dòng gió" tạm thời do vuốt tạo ra
+  xoayNuoc: [],   // các "xoáy dư" (residual vortex) để lại sau mỗi vuốt
+};
+
+const HE_SO = {
+  gioTuVuot: 620,        // độ mạnh lực gió từ 1 lần vuốt
+  banKinhVuot: 90,       // bán kính ảnh hưởng của dòng gió
+  thoiGianSongVuot: 1.8, // (giây) dòng gió tồn tại bao lâu rồi tắt
+
+  doManhXoay: 480,       // độ mạnh lực xoáy dư
+  banKinhXoay: 140,
+  thoiGianSongXoay: 5,   // (giây)
+
+  nguongNhieuLoan: 0.55, // vượt ngưỡng này thì bướm bắt đầu rung bất định
+  heSoRung: 90,
+
+  canDrag: 0.90,         // hệ số ma sát/khí động lực mỗi giây (0..1, càng nhỏ càng "phanh" nhanh)
+  thoiGianDauDung: 1.2,  // (giây) đứng yên trong đúng vùng hoa để "đậu"
+  thoiGianBayDi: 5,      // (giây) đứng trong vùng sai màu quá lâu thì bay mất
+};
+
+function zoneTuyetDoi(z) {
+  const minCanh = Math.min(W, H);
+  return { x: z.rx * W, y: z.ry * H, r: z.rr * minCanh, mau: z.mau };
+}
+
+function taiLevel(levelSo) {
+  const cfg = CAU_HINH_LEVEL[levelSo];
+  state.level = levelSo;
+  state.thoiGian = 0;
+  state.soVuot = 0;
+  state.luongGio = [];
+  state.xoayNuoc = [];
+  state.buom = cfg.dsButterflyMau.map((mau, i) => {
+    // rải bướm ngẫu nhiên, tránh sát mép
+    const vi = { x: 40 + Math.random() * (W - 80), y: 40 + Math.random() * (H - 80) };
+    return {
+      mau, vi,
+      van: { x: 0, y: 0 },       // vận tốc
+      goc: Math.random() * Math.PI * 2, // hướng mặt bướm
+      phaCanh: Math.random() * 10,      // pha vỗ cánh (dùng cho sin animation)
+      dwellDung: 0,   // thời gian liên tục đứng đúng vùng hoa
+      dwellSai: 0,    // thời gian liên tục đứng sai vùng hoa
+      trangThai: 'bay', // 'bay' | 'dau' (đã đậu) | 'bayMat' (bay khỏi vườn)
+    };
+  });
+
+  document.querySelectorAll('#levelSelect button').forEach(btn => {
+    btn.classList.toggle('dangChon', Number(btn.dataset.level) === levelSo);
+  });
+  thongBao.style.display = 'none';
+}
+
+document.querySelectorAll('#levelSelect button').forEach(btn => {
+  btn.addEventListener('click', () => taiLevel(Number(btn.dataset.level)));
+});
+
+// ============================================================
+// GIÓ NỀN (constant hoặc dao động tùy level)
+// ============================================================
+function gioNenTai(t) {
+  const g = CAU_HINH_LEVEL[state.level].gio;
+  if (g.kieu === 'tinh') return g.vector;
+  // dao động: xoay hướng gió liên tục quanh 1 vòng tròn chậm
+  const goc = t * g.tanSo;
+  return { x: Math.cos(goc) * g.bienDo, y: Math.sin(goc * 0.7) * g.bienDo };
+}
+
+// ============================================================
+// INPUT: dùng Pointer Events để gộp chung touch + mouse
+// ============================================================
+let dangVuot = false;
+let duongVuotHienTai = []; // các điểm {x,y} trong lần vuốt đang diễn ra
+
+function toaDoTuSuKien(e) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  dangVuot = true;
+  duongVuotHienTai = [toaDoTuSuKien(e)];
+  canvas.setPointerCapture(e.pointerId);
+});
+
+canvas.addEventListener('pointermove', (e) => {
+  if (!dangVuot) return;
+  e.preventDefault();
+  duongVuotHienTai.push(toaDoTuSuKien(e));
+});
+
+canvas.addEventListener('pointerup', (e) => {
+  e.preventDefault();
+  ketThucVuot();
+});
+canvas.addEventListener('pointercancel', (e) => { ketThucVuot(); });
+
+function ketThucVuot() {
+  if (!dangVuot) return;
+  dangVuot = false;
+  // bỏ qua các vuốt quá ngắn (< 3 điểm) — theo yêu cầu spec
+  if (duongVuotHienTai.length >= 3) {
+    const diemDau = duongVuotHienTai[0];
+    const diemCuoi = duongVuotHienTai[duongVuotHienTai.length - 1];
+    const huong = V.chuanHoa(V.tru(diemCuoi, diemDau));
+
+    // 1) dòng gió tạm thời dọc theo đường vuốt
+    state.luongGio.push({
+      duong: duongVuotHienTai.slice(),
+      huong,
+      batDau: state.thoiGian,
+    });
+
+    // 2) xoáy dư để lại tại điểm kết thúc vuốt
+    state.xoayNuoc.push({
+      tam: diemCuoi,
+      // chiều xoay ngẫu nhiên (thuận/nghịch) để đa dạng cảm giác turbulence
+      chieu: Math.random() < 0.5 ? 1 : -1,
+      batDau: state.thoiGian,
+    });
+
+    state.soVuot++;
+  }
+  duongVuotHienTai = [];
+}
+
+// khoảng cách từ 1 điểm tới 1 đoạn thẳng (dùng để tính lực dòng gió theo đường vuốt)
+function khoangCachToiDoan(p, a, b) {
+  const ab = V.tru(b, a);
+  const doDaiAB2 = ab.x * ab.x + ab.y * ab.y;
+  if (doDaiAB2 < 1e-6) return V.doDai(V.tru(p, a));
+  let t = ((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / doDaiAB2;
+  t = gioiHan(t, 0, 1);
+  const hinhChieu = { x: a.x + ab.x * t, y: a.y + ab.y * t };
+  return V.doDai(V.tru(p, hinhChieu));
+}
+
+function khoangCachToiDuong(p, duong) {
+  let min = Infinity;
+  for (let i = 0; i < duong.length - 1; i++) {
+    min = Math.min(min, khoangCachToiDoan(p, duong[i], duong[i + 1]));
+  }
+  return min === Infinity ? V.doDai(V.tru(p, duong[0])) : min;
+}
+
+// ============================================================
+// CẬP NHẬT VẬT LÝ MỖI FRAME
+// ============================================================
+function capNhat(dt) {
+  state.thoiGian += dt;
+
+  // dọn các dòng gió / xoáy đã hết hạn
+  state.luongGio = state.luongGio.filter(l => state.thoiGian - l.batDau < HE_SO.thoiGianSongVuot);
+  state.xoayNuoc = state.xoayNuoc.filter(x => state.thoiGian - x.batDau < HE_SO.thoiGianSongXoay);
+
+  const gio = gioNenTai(state.thoiGian);
+  const zonesHienTai = CAU_HINH_LEVEL[state.level].vungHoa.map(zoneTuyetDoi);
+
+  for (const b of state.buom) {
+    if (b.trangThai !== 'bay') continue; // đã đậu hoặc đã bay mất thì bỏ qua vật lý
+
+    let luc = { x: gio.x, y: gio.y };
+    let nhieuLoan = 0;
+
+    // lực từ các dòng gió do vuốt tạo ra
+    for (const l of state.luongGio) {
+      const d = khoangCachToiDuong(b.vi, l.duong);
+      if (d < HE_SO.banKinhVuot) {
+        const suyGiam = 1 - (state.thoiGian - l.batDau) / HE_SO.thoiGianSongVuot;
+        const rot = 1 - d / HE_SO.banKinhVuot;
+        const doManh = HE_SO.gioTuVuot * suyGiam * rot;
+        luc = V.cong(luc, V.nhan(l.huong, doManh));
+      }
+    }
+
+    // lực xoáy (vuông góc với hướng từ tâm xoáy ra vị trí bướm)
+    for (const x of state.xoayNuoc) {
+      const dTam = V.tru(b.vi, x.tam);
+      const d = V.doDai(dTam);
+      if (d < HE_SO.banKinhXoay && d > 1e-3) {
+        const suyGiam = 1 - (state.thoiGian - x.batDau) / HE_SO.thoiGianSongXoay;
+        const rot = 1 - d / HE_SO.banKinhXoay;
+        const doManh = HE_SO.doManhXoay * suyGiam * rot * x.chieu;
+        const huongXoay = V.vuongGoc(V.chuanHoa(dTam));
+        luc = V.cong(luc, V.nhan(huongXoay, doManh));
+        nhieuLoan += Math.abs(suyGiam * rot); // càng nhiều xoáy chồng nhau càng nhiễu loạn
+      }
+    }
+
+    // turbulence: nhiều xoáy chồng nhau -> rung ngẫu nhiên khó đoán
+    if (nhieuLoan > HE_SO.nguongNhieuLoan) {
+      const doRung = (nhieuLoan - HE_SO.nguongNhieuLoan) * HE_SO.heSoRung;
+      luc.x += (Math.random() * 2 - 1) * doRung;
+      luc.y += (Math.random() * 2 - 1) * doRung;
+    }
+
+    // tích phân: vận tốc cộng dồn lực rồi bị ma sát (drag) kéo lại
+    b.van = V.cong(b.van, V.nhan(luc, dt));
+    b.van = V.nhan(b.van, Math.pow(HE_SO.canDrag, dt * 60));
+    b.vi = V.cong(b.vi, V.nhan(b.van, dt));
+
+    // giữ bướm trong khung hình (dội nhẹ ở mép)
+    if (b.vi.x < 10) { b.vi.x = 10; b.van.x *= -0.4; }
+    if (b.vi.x > W - 10) { b.vi.x = W - 10; b.van.x *= -0.4; }
+    if (b.vi.y < 10) { b.vi.y = 10; b.van.y *= -0.4; }
+    if (b.vi.y > H - 10) { b.vi.y = H - 10; b.van.y *= -0.4; }
+
+    // hướng mặt theo vận tốc, vỗ cánh nhanh hơn khi bay nhanh
+    if (V.doDai(b.van) > 4) b.goc = Math.atan2(b.van.y, b.van.x);
+    b.phaCanh += dt * (5 + Math.min(V.doDai(b.van) / 30, 8));
+
+    // kiểm tra đang đứng trong vùng hoa nào
+    const zone = zonesHienTai.find(z => V.doDai(V.tru(b.vi, z)) < z.r);
+    if (zone && zone.mau === b.mau) {
+      b.dwellDung += dt; b.dwellSai = 0;
+      if (b.dwellDung >= HE_SO.thoiGianDauDung) b.trangThai = 'dau';
+    } else if (zone && zone.mau !== b.mau) {
+      b.dwellSai += dt; b.dwellDung = 0;
+      if (b.dwellSai >= HE_SO.thoiGianBayDi) b.trangThai = 'bayMat';
+    } else {
+      b.dwellDung = 0; b.dwellSai = 0;
+    }
+  }
+
+  kiemTraThang();
+}
+
+function kiemTraThang() {
+  const tongConCanBay = state.buom.filter(b => b.trangThai === 'bay').length;
+  const daDau = state.buom.filter(b => b.trangThai === 'dau').length;
+  if (tongConCanBay === 0 && thongBao.style.display === 'none') {
+    if (daDau === state.buom.length) {
+      thongBao.textContent = `Hoàn thành! ${daDau}/${state.buom.length} bướm đã đậu đúng hoa 🎉`;
+    } else {
+      thongBao.textContent = `Kết thúc: ${daDau}/${state.buom.length} bướm đậu đúng hoa`;
+    }
+    thongBao.style.display = 'block';
+  }
+}
+
+// ============================================================
+// VẼ (canvas 2D) — ưu tiên cảm giác cơ chế hơn là đẹp
+// ============================================================
+function ve() {
+  ctx.clearRect(0, 0, W, H);
+
+  // nền cottage-core
+  ctx.fillStyle = '#f6efe0';
+  ctx.fillRect(0, 0, W, H);
+
+  veVungHoa();
+  veXoayNuoc();
+  if (dangVuot) veDuongVuotDangKeo();
+  veButterflies();
+}
+
+function veVungHoa() {
+  for (const zRaw of CAU_HINH_LEVEL[state.level].vungHoa) {
+    const z = zoneTuyetDoi(zRaw);
+    const grad = ctx.createRadialGradient(z.x, z.y, 0, z.x, z.y, z.r);
+    grad.addColorStop(0, MAU[z.mau] + '55');
+    grad.addColorStop(1, MAU[z.mau] + '00');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.setLineDash([6, 6]);
+    ctx.strokeStyle = MAU[z.mau];
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 6 chấm hoa nhỏ rải quanh tâm
+    for (let i = 0; i < 6; i++) {
+      const goc = (i / 6) * Math.PI * 2;
+      const r2 = z.r * 0.5;
+      ctx.fillStyle = MAU[z.mau];
+      ctx.beginPath();
+      ctx.arc(z.x + Math.cos(goc) * r2, z.y + Math.sin(goc) * r2, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function veXoayNuoc() {
+  for (const x of state.xoayNuoc) {
+    const suyGiam = gioiHan(1 - (state.thoiGian - x.batDau) / HE_SO.thoiGianSongXoay, 0, 1);
+    ctx.strokeStyle = `rgba(90,70,55,${0.25 * suyGiam})`;
+    ctx.lineWidth = 1.5;
+    for (let vong = 0; vong < 3; vong++) {
+      const r = 14 + vong * 12 + (state.thoiGian * 40 * x.chieu) % 40;
+      ctx.beginPath();
+      ctx.arc(x.tam.x, x.tam.y, r, 0, Math.PI * 1.4);
+      ctx.stroke();
+    }
+  }
+}
+
+function veDuongVuotDangKeo() {
+  if (duongVuotHienTai.length < 2) return;
+  ctx.strokeStyle = 'rgba(110,160,220,0.6)';
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(duongVuotHienTai[0].x, duongVuotHienTai[0].y);
+  for (const p of duongVuotHienTai) ctx.lineTo(p.x, p.y);
+  ctx.stroke();
+}
+
+function veButterflies() {
+  for (const b of state.buom) {
+    if (b.trangThai === 'bayMat') continue; // đã bay mất, không vẽ nữa
+
+    ctx.save();
+    ctx.translate(b.vi.x, b.vi.y);
+    ctx.rotate(b.goc);
+
+    const vo = Math.sin(b.phaCanh) * 0.5 + 0.5; // 0..1 nhịp vỗ cánh
+    const doMoCanh = 6 + vo * 6;
+
+    ctx.fillStyle = MAU[b.mau];
+    // 4 cánh (ellipse), trên-dưới x trái-phải
+    ve1Canh(-doMoCanh, -8, 10, 6);
+    ve1Canh(-doMoCanh, 8, 10, 6);
+    ve1Canh(doMoCanh, -8, 10, 6);
+    ve1Canh(doMoCanh, 8, 10, 6);
+
+    // thân bướm
+    ctx.fillStyle = '#4a3b2f';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 3, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // hiệu ứng đã đậu: quầng sáng nhẹ
+    if (b.trangThai === 'dau') {
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 16, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+}
+
+function ve1Canh(x, y, rx, ry) {
+  ctx.beginPath();
+  ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function capNhatHud() {
+  const daDau = state.buom.filter(b => b.trangThai === 'dau').length;
+  hudDau.textContent = `${daDau} / ${state.buom.length} đã đậu`;
+  hudVuot.textContent = `Vuốt: ${state.soVuot}`;
+}
+
+// ============================================================
+// VÒNG LẶP CHÍNH
+// ============================================================
+let thoiGianKhungHinhTruoc = performance.now();
+function vongLap(now) {
+  const dt = Math.min((now - thoiGianKhungHinhTruoc) / 1000, 0.033); // clamp để tránh nhảy khung khi tab bị ẩn
+  thoiGianKhungHinhTruoc = now;
+
+  capNhat(dt);
+  ve();
+  capNhatHud();
+
+  requestAnimationFrame(vongLap);
+}
+
+taiLevel(1);
+requestAnimationFrame(vongLap);
+</script>
+</body>
+</html>
