@@ -112,9 +112,10 @@
     <div id="hudTrai">Thiết lập — Nét vẽ: 0</div>
     <button id="btnDebug" class="nutTron">🐞 Debug</button>
   </div>
-  <div id="goiY">Vẽ đường trên màn hình để tạo luồng gió, rồi bấm Bắt đầu bay</div>
+  <div id="goiY">Chuột trái/chạm: vẽ gió người chơi · Chuột phải: vẽ gió level</div>
   <div id="thongBao"></div>
   <div id="thanhCongCu">
+    <button id="btnXoaLevel" class="nutTron">🗑 Xoá gió level</button>
     <button id="btnXoa" class="nutTron">🗑 Xoá nét vẽ</button>
     <button id="btnPhase" class="nutTron">▶ Bắt đầu bay</button>
   </div>
@@ -209,6 +210,7 @@ const thongBao = document.getElementById('thongBao');
 const goiY = document.getElementById('goiY');
 const btnDebug = document.getElementById('btnDebug');
 const btnXoa = document.getElementById('btnXoa');
+const btnXoaLevel = document.getElementById('btnXoaLevel');
 const btnPhase = document.getElementById('btnPhase');
 
 // Toạ độ "logic" cố định — mọi vị trí trong game (zone, bướm, lưới gió)
@@ -300,20 +302,6 @@ function doiKichThuocO(canhMoi) {
   taiLevel(state.level);
 }
 
-// đặt 1 vùng chữ nhật (theo toạ độ logic px) thành gió cố định của level
-function datGioLevel(x0, y0, x1, y1, huong) {
-  const h = V.chuanHoa(huong);
-  const c0 = oTuViTri({ x: x0, y: y0 }) || { cx: 0, cy: 0 };
-  const c1 = oTuViTri({ x: x1 - 1, y: y1 - 1 }) || { cx: GRID.cols - 1, cy: GRID.rows - 1 };
-  for (let cy = c0.cy; cy <= c1.cy; cy++) {
-    for (let cx = c0.cx; cx <= c1.cx; cx++) {
-      const i = oIndex(cx, cy);
-      luoiLevel[i * 2] = h.x; luoiLevel[i * 2 + 1] = h.y;
-      coDinhLevel[i] = 1;
-    }
-  }
-}
-
 // Jacobi relaxation có SUY HAO: ô không cố định = một phần giá trị cũ của
 // chính nó (HE_SO_NOI_TAI) + một phần trung bình 8 ô xung quanh
 // (HE_SO_LAN_TRUYEN). Vì ma trận xuất phát từ toàn số 0, hệ số neo lại
@@ -397,8 +385,9 @@ function gioTaiViTri(p) {
 
 // ============================================================
 // CẤU HÌNH TỪNG LEVEL — zone theo toạ độ logic tuyệt đối (px trong 1080x1920)
-// gioLevel: danh sách vùng gió cố định đặt sẵn, chỉ để tạo base field
-// khác nhau cho từng level; người chơi vẽ thêm để dẫn dòng gió vào hoa.
+// Gió level KHÔNG còn khai báo cứng ở đây nữa — mỗi level bắt đầu với
+// luoiLevel trống, tự vẽ bằng CHUỘT PHẢI ngay trên canvas lúc Thiết lập
+// (xem canvas.addEventListener('pointerdown', ...) và apDungNetVeVaoLuoi).
 // ============================================================
 function taoZone(mau, x, y, r) { return { mau, x, y, r }; }
 
@@ -407,16 +396,11 @@ const CAU_HINH_LEVEL = {
     ten: 'Dễ',
     dsButterflyMau: ['cam', 'cam', 'cam'],
     vungHoa: [taoZone('cam', 540, 1000, 190)],
-    gioLevel: [{ x0: 0, y0: 120, x1: 1080, y1: 260, huong: { x: 0, y: 1 } }],
   },
   2: {
     ten: 'Khó',
     dsButterflyMau: ['cam', 'cam', 'tim', 'tim'],
     vungHoa: [taoZone('cam', 230, 380, 170), taoZone('tim', 850, 1540, 170)],
-    gioLevel: [
-      { x0: 0, y0: 0, x1: 160, y1: 1920, huong: { x: 1, y: 0.6 } },
-      { x0: 920, y0: 0, x1: 1080, y1: 1920, huong: { x: -1, y: -0.6 } },
-    ],
   },
   3: {
     ten: 'Siêu khó',
@@ -425,11 +409,6 @@ const CAU_HINH_LEVEL = {
       taoZone('cam', 260, 380, 150),
       taoZone('tim', 820, 380, 150),
       taoZone('hong', 540, 1620, 150),
-    ],
-    gioLevel: [
-      { x0: 0, y0: 700, x1: 1080, y1: 800, huong: { x: 1, y: 0 } },
-      { x0: 0, y0: 1100, x1: 1080, y1: 1200, huong: { x: -1, y: 0 } },
-      { x0: 460, y0: 0, x1: 620, y1: 400, huong: { x: 0, y: 1 } },
     ],
   },
 };
@@ -441,7 +420,8 @@ const state = {
   level: 1,
   phase: 'setup', // 'setup' (vẽ đường) | 'play' (bướm bắt đầu bay theo gió)
   thoiGian: 0,
-  soNetVe: 0,
+  soNetVe: 0,       // số nét vẽ gió người chơi (chuột trái/chạm)
+  soNetVeLevel: 0,  // số nét vẽ gió level (chuột phải)
   debug: false,
   buom: [],
   netVeDaVe: [], // các nét đã vẽ xong, còn hiện trên màn hình cho tới khi bấm Play
@@ -468,12 +448,13 @@ function taiLevel(levelSo) {
   state.phase = 'setup';
   state.thoiGian = 0;
   state.soNetVe = 0;
+  state.soNetVeLevel = 0;
   state.netVeDaVe = [];
 
-  // reset lưới gió: level đặt lại preset, người chơi xoá trắng để vẽ lại.
+  // reset lưới gió: level bắt đầu TRỐNG (không còn preset khai báo cứng) —
+  // tự vẽ gió level bằng chuột phải, vẽ gió người chơi bằng chuột trái/chạm.
   taoLuoiTrong();
-  for (const v of cfg.gioLevel) datGioLevel(v.x0, v.y0, v.x1, v.y1, v.huong);
-  tinhLuoiChinh(); // tính 1 lần cho preset của level, không cần chờ vẽ nét nào
+  tinhLuoiChinh();
 
   state.buom = cfg.dsButterflyMau.map((mau) => {
     const viGoc = viTriNgauNhienTranhVung(cfg.vungHoa);
@@ -524,6 +505,14 @@ btnXoa.addEventListener('click', () => {
   capNhatGiaoDien();
 });
 
+btnXoaLevel.addEventListener('click', () => {
+  luoiLevel.fill(0);
+  coDinhLevel.fill(0);
+  state.soNetVeLevel = 0;
+  tinhLuoiChinh();
+  capNhatGiaoDien();
+});
+
 btnPhase.addEventListener('click', () => {
   if (state.phase === 'setup') {
     state.phase = 'play';
@@ -540,15 +529,23 @@ function capNhatGiaoDien() {
   btnPhase.textContent = dangSetup ? '▶ Bắt đầu bay' : '↺ Vẽ lại';
   goiY.style.display = dangSetup ? 'block' : 'none';
   btnXoa.style.display = dangSetup ? 'inline-block' : 'none';
+  btnXoaLevel.style.display = dangSetup ? 'inline-block' : 'none';
 }
 
 // ============================================================
 // INPUT: dùng Pointer Events để gộp chung touch + mouse.
 // Chỉ vẽ được ở phase 'setup' — nét vẽ xấp xỉ thành vector gió trên
 // từng ô lưới mà nó đi qua, KHÔNG đẩy bướm trực tiếp như bản cũ.
+//
+// CHUỘT TRÁI / CHẠM  -> vẽ gió NGƯỜI CHƠI (luoiNguoiChoi, cố định tới
+//                        khi bấm Play, hiện màu xanh dương nhạt).
+// CHUỘT PHẢI         -> vẽ gió LEVEL (luoiLevel, cố định lâu dài như 1
+//                        preset của level, hiện màu cam — thay cho việc
+//                        khai báo cứng toạ độ trong CAU_HINH_LEVEL).
 // ============================================================
 let dangVe = false;
 let duongVeHienTai = [];
+let veLoaiHienTai = 'nguoiChoi'; // 'nguoiChoi' | 'level' — quyết định bởi nút chuột lúc bấm xuống
 
 function toaDoTuSuKien(e) {
   const rect = canvas.getBoundingClientRect();
@@ -558,10 +555,14 @@ function toaDoTuSuKien(e) {
   };
 }
 
+canvas.addEventListener('contextmenu', (e) => e.preventDefault()); // chặn menu chuột phải mặc định
+
 canvas.addEventListener('pointerdown', (e) => {
   if (state.phase !== 'setup') return;
+  if (e.button !== 0 && e.button !== 2) return; // chỉ nhận trái (0, gồm cả chạm) và phải (2)
   e.preventDefault();
   dangVe = true;
+  veLoaiHienTai = e.button === 2 ? 'level' : 'nguoiChoi';
   duongVeHienTai = [toaDoTuSuKien(e)];
   canvas.setPointerCapture(e.pointerId);
 });
@@ -579,18 +580,26 @@ function ketThucNetVe() {
   if (!dangVe) return;
   dangVe = false;
   if (duongVeHienTai.length >= 3) {
-    ghiNhanNetVeVaoLuoi(duongVeHienTai);
-    // giữ lại nét vẽ trên màn hình, chỉ xoá khi bấm Play (xem btnPhase)
-    state.netVeDaVe.push(duongVeHienTai);
+    if (veLoaiHienTai === 'level') {
+      apDungNetVeVaoLuoi(duongVeHienTai, luoiLevel, coDinhLevel);
+      state.soNetVeLevel++;
+    } else {
+      apDungNetVeVaoLuoi(duongVeHienTai, luoiNguoiChoi, coDinhNguoiChoi);
+      state.soNetVe++;
+      // giữ lại nét vẽ trên màn hình, chỉ xoá khi bấm Play (xem btnPhase)
+      state.netVeDaVe.push(duongVeHienTai);
+    }
+    tinhLuoiChinh();
   }
   duongVeHienTai = [];
 }
 
 // xấp xỉ đường vẽ thành vector cho từng ô lưới nó đi qua: lấy mẫu dọc
 // đường theo bước cố định, cộng dồn hướng cục bộ rồi chuẩn hoá mỗi ô.
-// Ghi vào luoiNguoiChoi rồi tính lại luoiChinh ngay sau khi vẽ xong 1 nét
-// (không tính liên tục mỗi frame cho đỡ tốn).
-function ghiNhanNetVeVaoLuoi(duong) {
+// Ghi thẳng vào luoiDich/coDinhDich được truyền vào (luoiNguoiChoi hoặc
+// luoiLevel) — gọi lại tinhLuoiChinh() ở nơi gọi hàm này, không tính
+// liên tục mỗi frame cho đỡ tốn.
+function apDungNetVeVaoLuoi(duong, luoiDich, coDinhDich) {
   const tongTheoO = new Map();
   for (let i = 0; i < duong.length - 1; i++) {
     const a = duong[i], b2 = duong[i + 1];
@@ -611,12 +620,10 @@ function ghiNhanNetVeVaoLuoi(duong) {
   for (const [i2, tong] of tongTheoO) {
     const d = Math.hypot(tong.x, tong.y);
     if (d < 1e-4) continue;
-    luoiNguoiChoi[i2 * 2] = tong.x / d;
-    luoiNguoiChoi[i2 * 2 + 1] = tong.y / d;
-    coDinhNguoiChoi[i2] = 1;
+    luoiDich[i2 * 2] = tong.x / d;
+    luoiDich[i2 * 2 + 1] = tong.y / d;
+    coDinhDich[i2] = 1;
   }
-  state.soNetVe++;
-  tinhLuoiChinh();
 }
 
 // ============================================================
@@ -755,7 +762,8 @@ function veVungHoa() {
 
 function veDuongVeDangKeo() {
   if (duongVeHienTai.length < 2) return;
-  ctx.strokeStyle = 'rgba(110,160,220,0.7)';
+  // xanh dương = đang vẽ gió người chơi, cam = đang vẽ gió level (chuột phải)
+  ctx.strokeStyle = veLoaiHienTai === 'level' ? 'rgba(216,142,91,0.8)' : 'rgba(110,160,220,0.7)';
   ctx.lineWidth = 6;
   ctx.lineCap = 'round';
   ctx.beginPath();
@@ -874,7 +882,7 @@ function veLuoiDebug() {
 
 function capNhatHud() {
   if (state.phase === 'setup') {
-    hudTrai.textContent = `Thiết lập — Nét vẽ: ${state.soNetVe}`;
+    hudTrai.textContent = `Thiết lập — Nét vẽ: ${state.soNetVe} · Gió level: ${state.soNetVeLevel}`;
   } else {
     const daDau = state.buom.filter(b => b.trangThai === 'dau').length;
     hudTrai.textContent = `Đang bay — ${daDau} / ${state.buom.length} đã đậu`;
