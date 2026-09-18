@@ -193,9 +193,8 @@ function datGioLevel(x0, y0, x1, y1, huong) {
 // đúng độ suy hao đó (ô nguồn cố định vẫn giữ nguyên độ dài 1 vì đó là
 // giá trị đầu vào, không bị suy hao).
 //
-// Hàm này được gọi lại MỖI FRAME (xem vongLap) — không cần chờ bấm Play
-// nữa, để debug thấy ngay hiệu ứng khi đang vẽ/xoá nét. Chi phí tính vẫn
-// rất rẻ (vài trăm nghìn phép toán/frame) nên không cần tối ưu thêm.
+// Hàm này chỉ được gọi lại khi có gì đó thay đổi: tải level, vẽ xong 1
+// nét, hoặc bấm Xoá nét vẽ — KHÔNG chạy mỗi frame để đỡ tính toán liên tục.
 const SO_VONG_LAN_TOA = 120;
 const HE_SO_NOI_TAI = 0.4;      // giữ lại bao nhiêu giá trị cũ của chính ô đó
 const HE_SO_LAN_TRUYEN = 0.6;   // nhận bao nhiêu từ trung bình 8 ô xung quanh
@@ -328,9 +327,9 @@ function taiLevel(levelSo) {
   state.netVeDaVe = [];
 
   // reset lưới gió: level đặt lại preset, người chơi xoá trắng để vẽ lại.
-  // luoiChinh sẽ tự cập nhật ở vòng lặp chính (tinhLuoiChinh chạy mỗi frame).
   taoLuoiTrong();
   for (const v of cfg.gioLevel) datGioLevel(v.x0, v.y0, v.x1, v.y1, v.huong);
+  tinhLuoiChinh(); // tính 1 lần cho preset của level, không cần chờ vẽ nét nào
 
   state.buom = cfg.dsButterflyMau.map((mau) => {
     const viGoc = viTriNgauNhienTranhVung(cfg.vungHoa);
@@ -378,6 +377,7 @@ btnXoa.addEventListener('click', () => {
   coDinhNguoiChoi.fill(0);
   state.soNetVe = 0;
   state.netVeDaVe = [];
+  tinhLuoiChinh(); // nét vẽ vừa bị xoá, tính lại ngay để phản ánh đúng
   capNhatGiaoDien();
 });
 
@@ -385,7 +385,6 @@ btnPhase.addEventListener('click', () => {
   if (state.phase === 'setup') {
     state.phase = 'play';
     state.netVeDaVe = []; // hết Thiết lập thì xoá hình các nét vẽ khỏi màn hình
-    if (!state.debug) { state.debug = true; btnDebug.classList.add('dangChon'); } // bật debug để dễ đọc data lúc bay
   } else {
     state.phase = 'setup';
     hoiSinhButterflies();
@@ -446,8 +445,8 @@ function ketThucNetVe() {
 
 // xấp xỉ đường vẽ thành vector cho từng ô lưới nó đi qua: lấy mẫu dọc
 // đường theo bước cố định, cộng dồn hướng cục bộ rồi chuẩn hoá mỗi ô.
-// CHƯA tính lan toả ở đây — chỉ ghi vào luoiNguoiChoi làm đầu vào, người
-// chơi muốn vẽ/xoá bao nhiêu lần cũng được cho tới khi bấm Play.
+// Ghi vào luoiNguoiChoi rồi tính lại luoiChinh ngay sau khi vẽ xong 1 nét
+// (không tính liên tục mỗi frame cho đỡ tốn).
 const BUOC_LAY_MAU = 8;
 function ghiNhanNetVeVaoLuoi(duong) {
   const tongTheoO = new Map();
@@ -475,6 +474,7 @@ function ghiNhanNetVeVaoLuoi(duong) {
     coDinhNguoiChoi[i2] = 1;
   }
   state.soNetVe++;
+  tinhLuoiChinh();
 }
 
 // ============================================================
@@ -547,10 +547,44 @@ function ve() {
   ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
 
   veVungHoa();
+  veGioLevel(); // gió nền của level luôn hiện, không phụ thuộc nút Debug
   veCacNetDaVe();
   if (dangVe) veDuongVeDangKeo();
   veButterflies();
   if (state.debug) veLuoiDebug();
+}
+
+// mũi tên gió cố định đặt sẵn theo level — luôn vẽ để người chơi biết
+// "nền" gió mình đang phải dẫn dòng, không phải bật Debug mới thấy.
+function veGioLevel() {
+  const nuaCanh = GRID.canh / 2;
+  const doDaiMuiTen = GRID.canh * 0.42;
+  ctx.strokeStyle = 'rgba(70,110,200,0.55)';
+  ctx.lineWidth = 2;
+  for (let cy = 0; cy < GRID.rows; cy++) {
+    for (let cx = 0; cx < GRID.cols; cx++) {
+      const i = oIndex(cx, cy);
+      if (!coDinhLevel[i]) continue;
+      const vx = luoiLevel[i * 2], vy = luoiLevel[i * 2 + 1];
+      const d = Math.hypot(vx, vy);
+      if (d < 1e-6) continue;
+
+      const tam = { x: cx * GRID.canh + nuaCanh, y: cy * GRID.canh + nuaCanh };
+      const dau = { x: tam.x + (vx / d) * doDaiMuiTen, y: tam.y + (vy / d) * doDaiMuiTen };
+      ctx.beginPath();
+      ctx.moveTo(tam.x - (vx / d) * doDaiMuiTen, tam.y - (vy / d) * doDaiMuiTen);
+      ctx.lineTo(dau.x, dau.y);
+      ctx.stroke();
+
+      const gocMui = Math.atan2(vy, vx);
+      ctx.beginPath();
+      ctx.moveTo(dau.x, dau.y);
+      ctx.lineTo(dau.x - Math.cos(gocMui - 0.5) * 6, dau.y - Math.sin(gocMui - 0.5) * 6);
+      ctx.moveTo(dau.x, dau.y);
+      ctx.lineTo(dau.x - Math.cos(gocMui + 0.5) * 6, dau.y - Math.sin(gocMui + 0.5) * 6);
+      ctx.stroke();
+    }
+  }
 }
 
 function veVungHoa() {
@@ -664,11 +698,14 @@ function veLuoiDebug() {
     ctx.stroke();
   }
 
+  // ô gió level đã vẽ riêng ở veGioLevel() (luôn hiện, không cần debug),
+  // nên ở đây chỉ vẽ thêm ô người chơi vẽ + ô suy ra từ lan toả.
   const nuaCanh = GRID.canh / 2;
   const doDaiMuiTenToiDa = GRID.canh * 0.42;
   for (let cy = 0; cy < GRID.rows; cy++) {
     for (let cx = 0; cx < GRID.cols; cx++) {
       const i = oIndex(cx, cy);
+      if (coDinhLevel[i] && !coDinhNguoiChoi[i]) continue;
       const vx = luoiChinh[i * 2], vy = luoiChinh[i * 2 + 1];
       const d = Math.hypot(vx, vy);
       if (d < 0.03) continue;
@@ -679,7 +716,6 @@ function veLuoiDebug() {
       const dau = { x: tam.x + (vx / d) * doDaiMuiTen, y: tam.y + (vy / d) * doDaiMuiTen };
 
       ctx.strokeStyle = coDinhNguoiChoi[i] ? 'rgba(70,150,90,0.9)'
-        : coDinhLevel[i] ? 'rgba(70,110,200,0.9)'
         : 'rgba(90,70,55,0.6)';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -716,7 +752,6 @@ function vongLap(now) {
   const dt = Math.min((now - thoiGianKhungHinhTruoc) / 1000, 0.033);
   thoiGianKhungHinhTruoc = now;
 
-  tinhLuoiChinh(); // luôn tính lại mỗi frame, không cần chờ bấm Play
   capNhat(dt);
   ve();
   capNhatHud();
