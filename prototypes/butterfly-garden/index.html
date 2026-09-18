@@ -142,10 +142,13 @@ const MAU = {
 
 // ============================================================
 // LƯỚI GIÓ (grid vector field)
-// - luoiLevel : vector gió cài sẵn theo level (cố định, không đổi)
+// - luoiLevel : vector gió cài sẵn theo level (cố định, không đổi) — chỉ
+//   là GIÁ TRỊ ĐẦU VÀO, chưa phải kết quả cuối.
 // - luoiNguoiChoi : vector gió do người chơi vẽ ở phase Thiết lập (cố định)
-// - luoiChinh : kết quả TỔNG HỢP sau khi lan toả (diffuse) — ô nào không
-//   cố định thì lấy trung bình 4 ô xung quanh, lặp nhiều vòng cho mượt.
+//   — cũng chỉ là đầu vào. Vẽ bao nhiêu nét, xoá đi vẽ lại thế nào trong
+//   lúc Thiết lập đều được, KHÔNG tính toán gì cả cho tới khi bấm Play.
+// - luoiChinh : kết quả TỔNG HỢP, chỉ được tính đúng 1 lần khi bấm
+//   "Bắt đầu bay" (xem tinhLuoiChinh). Trước đó nó luôn = 0 toàn bộ.
 // ============================================================
 const GRID = { canh: 40, cols: LOGICAL_W / 40, rows: LOGICAL_H / 40 }; // 27 x 48
 const soO = GRID.cols * GRID.rows;
@@ -182,12 +185,20 @@ function datGioLevel(x0, y0, x1, y1, huong) {
   }
 }
 
-// Jacobi relaxation: ô không cố định = trung bình 4 ô lân cận, lặp nhiều
-// vòng để lan toả ra toàn lưới. Sau cùng chuẩn hoá mọi vector về độ dài 1
-// (độ lớn gió tạm thời luôn = 1, để dành mở rộng sau).
+// Jacobi relaxation có SUY HAO: ô không cố định = một phần giá trị cũ của
+// chính nó (HE_SO_NOI_TAI) + một phần trung bình 8 ô xung quanh
+// (HE_SO_LAN_TRUYEN). Vì ma trận xuất phát từ toàn số 0, hệ số neo lại
+// nội tại (0.4) khiến gió CÀNG XA nguồn thì CÀNG YẾU dần sau mỗi vòng lan
+// truyền — không chuẩn hoá lại về độ dài 1 ở bước cuối như trước, để giữ
+// đúng độ suy hao đó (ô nguồn cố định vẫn giữ nguyên độ dài 1 vì đó là
+// giá trị đầu vào, không bị suy hao).
 const SO_VONG_LAN_TOA = 120;
+const HE_SO_NOI_TAI = 0.4;    // giữ lại bao nhiêu giá trị cũ của chính ô đó
+const HE_SO_LAN_TRUYEN = 0.6; // nhận bao nhiêu từ trung bình 8 ô xung quanh
+const LAN_CAN_8 = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
+
 function tinhLuoiChinh() {
-  let a = new Float32Array(soO * 2);
+  let a = new Float32Array(soO * 2); // toàn bộ ma trận xuất phát từ 0
   for (let i = 0; i < soO; i++) {
     if (coDinhNguoiChoi[i]) { a[i * 2] = luoiNguoiChoi[i * 2]; a[i * 2 + 1] = luoiNguoiChoi[i * 2 + 1]; }
     else if (coDinhLevel[i]) { a[i * 2] = luoiLevel[i * 2]; a[i * 2 + 1] = luoiLevel[i * 2 + 1]; }
@@ -203,23 +214,21 @@ function tinhLuoiChinh() {
           continue;
         }
         let sx = 0, sy = 0, dem = 0;
-        if (cx > 0) { const j = oIndex(cx - 1, cy); sx += a[j * 2]; sy += a[j * 2 + 1]; dem++; }
-        if (cx < GRID.cols - 1) { const j = oIndex(cx + 1, cy); sx += a[j * 2]; sy += a[j * 2 + 1]; dem++; }
-        if (cy > 0) { const j = oIndex(cx, cy - 1); sx += a[j * 2]; sy += a[j * 2 + 1]; dem++; }
-        if (cy < GRID.rows - 1) { const j = oIndex(cx, cy + 1); sx += a[j * 2]; sy += a[j * 2 + 1]; dem++; }
-        b[i * 2] = dem ? sx / dem : 0;
-        b[i * 2 + 1] = dem ? sy / dem : 0;
+        for (const [dx, dy] of LAN_CAN_8) {
+          const nx = cx + dx, ny = cy + dy;
+          if (nx < 0 || nx >= GRID.cols || ny < 0 || ny >= GRID.rows) continue;
+          const j = oIndex(nx, ny);
+          sx += a[j * 2]; sy += a[j * 2 + 1]; dem++;
+        }
+        const tbX = dem ? sx / dem : 0, tbY = dem ? sy / dem : 0;
+        b[i * 2] = a[i * 2] * HE_SO_NOI_TAI + tbX * HE_SO_LAN_TRUYEN;
+        b[i * 2 + 1] = a[i * 2 + 1] * HE_SO_NOI_TAI + tbY * HE_SO_LAN_TRUYEN;
       }
     }
     [a, b] = [b, a];
   }
 
-  for (let i = 0; i < soO; i++) {
-    const vx = a[i * 2], vy = a[i * 2 + 1];
-    const d = Math.hypot(vx, vy);
-    if (d < 1e-4) { luoiChinh[i * 2] = 0; luoiChinh[i * 2 + 1] = 0; }
-    else { luoiChinh[i * 2] = vx / d; luoiChinh[i * 2 + 1] = vy / d; }
-  }
+  luoiChinh.set(a);
 }
 
 // gió tại 1 vị trí bất kỳ (lấy theo ô chứa vị trí đó)
@@ -303,10 +312,10 @@ function taiLevel(levelSo) {
   state.thoiGian = 0;
   state.soNetVe = 0;
 
-  // reset lưới gió: level đặt lại preset, người chơi xoá trắng để vẽ lại
+  // reset lưới gió: level đặt lại preset, người chơi xoá trắng để vẽ lại.
+  // CHƯA tính lan toả ở đây — luoiChinh cứ để = 0, chỉ tính khi bấm Play.
   taoLuoiTrong();
   for (const v of cfg.gioLevel) datGioLevel(v.x0, v.y0, v.x1, v.y1, v.huong);
-  tinhLuoiChinh();
 
   state.buom = cfg.dsButterflyMau.map((mau) => {
     const viGoc = viTriNgauNhienTranhVung(cfg.vungHoa);
@@ -352,8 +361,8 @@ btnDebug.addEventListener('click', () => {
 btnXoa.addEventListener('click', () => {
   luoiNguoiChoi.fill(0);
   coDinhNguoiChoi.fill(0);
+  luoiChinh.fill(0); // chưa bấm Play lại thì gió coi như chưa có gì
   state.soNetVe = 0;
-  tinhLuoiChinh();
   capNhatGiaoDien();
 });
 
@@ -417,6 +426,8 @@ function ketThucNetVe() {
 
 // xấp xỉ đường vẽ thành vector cho từng ô lưới nó đi qua: lấy mẫu dọc
 // đường theo bước cố định, cộng dồn hướng cục bộ rồi chuẩn hoá mỗi ô.
+// CHƯA tính lan toả ở đây — chỉ ghi vào luoiNguoiChoi làm đầu vào, người
+// chơi muốn vẽ/xoá bao nhiêu lần cũng được cho tới khi bấm Play.
 const BUOC_LAY_MAU = 8;
 function ghiNhanNetVeVaoLuoi(duong) {
   const tongTheoO = new Map();
@@ -444,7 +455,6 @@ function ghiNhanNetVeVaoLuoi(duong) {
     coDinhNguoiChoi[i2] = 1;
   }
   state.soNetVe++;
-  tinhLuoiChinh();
 }
 
 // ============================================================
@@ -620,20 +630,22 @@ function veLuoiDebug() {
   }
 
   const nuaCanh = GRID.canh / 2;
-  const doDaiMuiTen = GRID.canh * 0.4;
+  const doDaiMuiTenToiDa = GRID.canh * 0.42;
   for (let cy = 0; cy < GRID.rows; cy++) {
     for (let cx = 0; cx < GRID.cols; cx++) {
       const i = oIndex(cx, cy);
       const vx = luoiChinh[i * 2], vy = luoiChinh[i * 2 + 1];
       const d = Math.hypot(vx, vy);
-      if (d < 0.05) continue;
+      if (d < 0.03) continue;
 
+      // độ dài mũi tên tỉ lệ với độ lớn gió tại ô đó -> thấy rõ suy hao
+      const doDaiMuiTen = doDaiMuiTenToiDa * Math.min(d, 1);
       const tam = { x: cx * GRID.canh + nuaCanh, y: cy * GRID.canh + nuaCanh };
       const dau = { x: tam.x + (vx / d) * doDaiMuiTen, y: tam.y + (vy / d) * doDaiMuiTen };
 
       ctx.strokeStyle = coDinhNguoiChoi[i] ? 'rgba(70,150,90,0.9)'
         : coDinhLevel[i] ? 'rgba(70,110,200,0.9)'
-        : 'rgba(90,70,55,0.5)';
+        : 'rgba(90,70,55,0.6)';
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(tam.x - (vx / d) * doDaiMuiTen, tam.y - (vy / d) * doDaiMuiTen);
