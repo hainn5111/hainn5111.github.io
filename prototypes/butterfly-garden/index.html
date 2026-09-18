@@ -6,21 +6,24 @@
 <title>Butterfly Garden - Prototype</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a1a; touch-action: none; }
+  html { background: #1a1a1a; }
+  html, body { min-height: 100%; }
   body {
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-    display: flex; align-items: center; justify-content: center;
+    display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: center;
+    gap: 20px; padding: 20px;
   }
 
   /* Khung màn hình cố định tỉ lệ dọc điện thoại 1080x1920, co lại vừa
      màn hình PC (letterbox) thay vì kéo giãn full width như trước. */
   #khung {
     position: relative;
-    width: min(100vw, calc(100dvh * 1080 / 1920));
-    height: min(100dvh, calc(100vw * 1920 / 1080));
+    width: min(calc(100vw - 40px), calc((100dvh - 40px) * 1080 / 1920));
+    height: min(calc(100dvh - 40px), calc((100vw - 40px) * 1920 / 1080));
     background: #f6efe0;
     overflow: hidden;
     box-shadow: 0 0 30px rgba(0,0,0,0.4);
+    flex-shrink: 0; /* không cho flexbox bóp méo tỉ lệ khi panel chiếm chỗ */
   }
   canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 
@@ -64,6 +67,42 @@
     color: #5b4636; font-size: 13px; font-weight: 600; pointer-events: none;
     text-shadow: 0 1px 2px rgba(255,255,255,0.8);
   }
+
+  /* Bảng điều khiển — nằm NGOÀI khung điện thoại, chỉ để dev tune số liệu */
+  #bangDieuKhien {
+    width: 300px; flex-shrink: 0; max-height: calc(100vh - 40px); overflow-y: auto;
+    background: #262220; color: #ecdfd0; border-radius: 12px;
+    padding: 16px; font-size: 13px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  }
+  #bangDieuKhien h2 { font-size: 15px; margin-bottom: 6px; }
+  #bangDieuKhien .ghiChuPanel { color: #a8998a; font-size: 11px; margin-bottom: 14px; line-height: 1.4; }
+  #bangDieuKhien h3 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: #d98e5b; margin: 18px 0 8px; border-top: 1px solid #3a342f; padding-top: 12px;
+  }
+  #bangDieuKhien h3:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+  .hangTS { margin-bottom: 10px; }
+  .hangTS label {
+    display: flex; justify-content: space-between; gap: 6px;
+    margin-bottom: 3px; color: #ecdfd0;
+  }
+  .hangTS label span.gtHienTai { color: #7fd9a8; font-weight: 700; }
+  .hangTS input[type="range"] { width: 100%; accent-color: #d98e5b; }
+  .hangTS select {
+    width: 100%; padding: 5px; border-radius: 6px; border: 1px solid #4a423b;
+    background: #1e1a17; color: #ecdfd0; font-family: inherit; font-size: 12px;
+  }
+  .hangTS .ghiChuNho { color: #8c8078; font-size: 10.5px; margin-top: 2px; }
+  #bangDieuKhien .canhBao {
+    background: #4a2f2a; color: #f0c9bd; border-radius: 8px; padding: 8px 10px;
+    font-size: 11px; margin-top: 4px; line-height: 1.4;
+  }
+  #btnKhoiPhucMacDinh {
+    width: 100%; margin-top: 16px; padding: 10px; border: none; border-radius: 8px;
+    background: #3a342f; color: #ecdfd0; font-weight: 600; font-size: 12px;
+    font-family: inherit;
+  }
 </style>
 </head>
 <body>
@@ -84,6 +123,70 @@
     <button class="nutTron" data-level="2">Khó</button>
     <button class="nutTron" data-level="3">Siêu khó</button>
   </div>
+</div>
+
+<div id="bangDieuKhien">
+  <h2>⚙ Bảng điều khiển</h2>
+  <p class="ghiChuPanel">Chỉnh trực tiếp các hệ số tune của prototype — nằm ngoài màn hình game, không ảnh hưởng lối chơi thật ngoài việc đổi cảm giác vật lý.</p>
+
+  <h3>Bay &amp; đậu hoa (HE_SO)</h3>
+  <div class="hangTS">
+    <label>tocDoBay — tốc độ bay theo gió <span class="gtHienTai" id="gt_tocDoBay"></span></label>
+    <input type="range" id="ts_tocDoBay" min="50" max="600" step="10">
+  </div>
+  <div class="hangTS">
+    <label>doNhayHuong — độ nhạy bám hướng gió mới <span class="gtHienTai" id="gt_doNhayHuong"></span></label>
+    <input type="range" id="ts_doNhayHuong" min="0.2" max="10" step="0.1">
+  </div>
+  <div class="hangTS">
+    <label>thoiGianDauDung — giây đứng đúng hoa để đậu <span class="gtHienTai" id="gt_thoiGianDauDung"></span></label>
+    <input type="range" id="ts_thoiGianDauDung" min="0.2" max="5" step="0.1">
+  </div>
+  <div class="hangTS">
+    <label>thoiGianBayDi — giây đứng sai hoa thì bay mất <span class="gtHienTai" id="gt_thoiGianBayDi"></span></label>
+    <input type="range" id="ts_thoiGianBayDi" min="1" max="15" step="0.5">
+  </div>
+
+  <h3>Lan toả gió (HE_SO_LUOI)</h3>
+  <div class="hangTS">
+    <label>soVongLanToa — số vòng lặp Jacobi <span class="gtHienTai" id="gt_soVongLanToa"></span></label>
+    <input type="range" id="ts_soVongLanToa" min="5" max="300" step="5">
+  </div>
+  <div class="hangTS">
+    <label>heSoNoiTai — giữ lại giá trị cũ của ô <span class="gtHienTai" id="gt_heSoNoiTai"></span></label>
+    <input type="range" id="ts_heSoNoiTai" min="0" max="1" step="0.02">
+  </div>
+  <div class="hangTS">
+    <label>heSoLanTruyen — nhận từ 8 ô xung quanh <span class="gtHienTai" id="gt_heSoLanTruyen"></span></label>
+    <input type="range" id="ts_heSoLanTruyen" min="0" max="1" step="0.02">
+    <div class="ghiChuNho">tổng 2 hệ số hiện tại: <span id="gt_tongHeSo"></span> (lý tưởng ≈ 1)</div>
+  </div>
+  <div class="hangTS">
+    <label>nguongCoiLaKhong — ngưỡng coi là lặng gió <span class="gtHienTai" id="gt_nguongCoiLaKhong"></span></label>
+    <input type="range" id="ts_nguongCoiLaKhong" min="0" max="0.2" step="0.005">
+  </div>
+  <div class="hangTS">
+    <label>buocLayMau — bước lấy mẫu khi vẽ nét (px) <span class="gtHienTai" id="gt_buocLayMau"></span></label>
+    <input type="range" id="ts_buocLayMau" min="2" max="30" step="1">
+  </div>
+
+  <h3>Lưới ô vuông (GRID)</h3>
+  <div class="hangTS">
+    <label>canh — kích thước 1 ô (px logic) <span class="gtHienTai" id="gt_canhO"></span></label>
+    <select id="ts_canhO">
+      <option value="15">15 (72×128 ô)</option>
+      <option value="20">20 (54×96 ô)</option>
+      <option value="24">24 (45×80 ô)</option>
+      <option value="30">30 (36×64 ô)</option>
+      <option value="40">40 (27×48 ô) — mặc định</option>
+      <option value="60">60 (18×32 ô)</option>
+      <option value="90">90 (12×21 ô)</option>
+      <option value="120">120 (9×16 ô)</option>
+    </select>
+    <div class="canhBao">Đổi giá trị này sẽ tải lại level hiện tại (mất nét đã vẽ, bướm về vị trí ban đầu).</div>
+  </div>
+
+  <button id="btnKhoiPhucMacDinh">↺ Khôi phục mặc định</button>
 </div>
 
 <script>
@@ -151,7 +254,7 @@ const MAU = {
 //   "Bắt đầu bay" (xem tinhLuoiChinh). Trước đó nó luôn = 0 toàn bộ.
 // ============================================================
 const GRID = { canh: 40, cols: LOGICAL_W / 40, rows: LOGICAL_H / 40 }; // 27 x 48
-const soO = GRID.cols * GRID.rows;
+let soO = GRID.cols * GRID.rows;
 
 function oIndex(cx, cy) { return cy * GRID.cols + cx; }
 function oTuViTri(p) {
@@ -161,6 +264,7 @@ function oTuViTri(p) {
 }
 
 let luoiLevel, coDinhLevel, luoiNguoiChoi, coDinhNguoiChoi, luoiChinh;
+let boDemA, boDemB; // 2 bộ đệm dùng lại khi tính lan toả, cấp phát lại nếu đổi kích thước ô
 
 function taoLuoiTrong() {
   luoiLevel = new Float32Array(soO * 2);
@@ -169,7 +273,27 @@ function taoLuoiTrong() {
   coDinhNguoiChoi = new Uint8Array(soO);
   luoiChinh = new Float32Array(soO * 2);
 }
-taoLuoiTrong();
+
+// gọi khi khởi động, hoặc khi đổi GRID.canh (kích thước ô) từ bảng điều khiển —
+// phải cấp phát lại toàn bộ vì số ô (soO) thay đổi.
+function khoiTaoBoNhoLuoi() {
+  soO = GRID.cols * GRID.rows;
+  boDemA = new Float32Array(soO * 2);
+  boDemB = new Float32Array(soO * 2);
+  taoLuoiTrong();
+}
+khoiTaoBoNhoLuoi();
+
+// đổi kích thước ô lưới từ bảng điều khiển: tính lại cols/rows rồi tải lại
+// level hiện tại (mất nét đã vẽ, bướm về vị trí ban đầu — không tránh được
+// vì toạ độ ô cũ không còn khớp lưới mới).
+function doiKichThuocO(canhMoi) {
+  GRID.canh = canhMoi;
+  GRID.cols = LOGICAL_W / canhMoi;
+  GRID.rows = LOGICAL_H / canhMoi;
+  khoiTaoBoNhoLuoi();
+  taiLevel(state.level);
+}
 
 // đặt 1 vùng chữ nhật (theo toạ độ logic px) thành gió cố định của level
 function datGioLevel(x0, y0, x1, y1, huong) {
@@ -195,15 +319,16 @@ function datGioLevel(x0, y0, x1, y1, huong) {
 //
 // Hàm này chỉ được gọi lại khi có gì đó thay đổi: tải level, vẽ xong 1
 // nét, hoặc bấm Xoá nét vẽ — KHÔNG chạy mỗi frame để đỡ tính toán liên tục.
-const SO_VONG_LAN_TOA = 120;
-const HE_SO_NOI_TAI = 0.4;      // giữ lại bao nhiêu giá trị cũ của chính ô đó
-const HE_SO_LAN_TRUYEN = 0.6;   // nhận bao nhiêu từ trung bình 8 ô xung quanh
-const NGUONG_COI_LA_KHONG = 0.02; // độ lớn dưới mức này thì coi như lặng gió (= 0)
+// Tất cả hệ số dưới đây gộp vào 1 object để bảng điều khiển ngoài màn hình
+// (xem #bangDieuKhien ở cuối file) có thể chỉnh trực tiếp, không phải sửa code.
+const HE_SO_LUOI = {
+  soVongLanToa: 120,     // số vòng lặp Jacobi
+  heSoNoiTai: 0.4,       // giữ lại bao nhiêu giá trị cũ của chính ô đó
+  heSoLanTruyen: 0.6,    // nhận bao nhiêu từ trung bình 8 ô xung quanh
+  nguongCoiLaKhong: 0.02, // độ lớn dưới mức này thì coi như lặng gió (= 0)
+  buocLayMau: 8,         // (px) bước lấy mẫu dọc đường vẽ khi xấp xỉ vào lưới
+};
 const LAN_CAN_8 = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
-
-// 2 bộ đệm dùng lại mỗi lần tính, tránh cấp phát mảng mới mỗi frame
-const boDemA = new Float32Array(soO * 2);
-const boDemB = new Float32Array(soO * 2);
 
 function tinhLuoiChinh() {
   let a = boDemA, b = boDemB;
@@ -213,7 +338,7 @@ function tinhLuoiChinh() {
     else if (coDinhLevel[i]) { a[i * 2] = luoiLevel[i * 2]; a[i * 2 + 1] = luoiLevel[i * 2 + 1]; }
   }
 
-  for (let vong = 0; vong < SO_VONG_LAN_TOA; vong++) {
+  for (let vong = 0; vong < HE_SO_LUOI.soVongLanToa; vong++) {
     for (let cy = 0; cy < GRID.rows; cy++) {
       for (let cx = 0; cx < GRID.cols; cx++) {
         const i = oIndex(cx, cy);
@@ -229,8 +354,8 @@ function tinhLuoiChinh() {
           sx += a[j * 2]; sy += a[j * 2 + 1]; dem++;
         }
         const tbX = dem ? sx / dem : 0, tbY = dem ? sy / dem : 0;
-        b[i * 2] = a[i * 2] * HE_SO_NOI_TAI + tbX * HE_SO_LAN_TRUYEN;
-        b[i * 2 + 1] = a[i * 2 + 1] * HE_SO_NOI_TAI + tbY * HE_SO_LAN_TRUYEN;
+        b[i * 2] = a[i * 2] * HE_SO_LUOI.heSoNoiTai + tbX * HE_SO_LUOI.heSoLanTruyen;
+        b[i * 2 + 1] = a[i * 2 + 1] * HE_SO_LUOI.heSoNoiTai + tbY * HE_SO_LUOI.heSoLanTruyen;
       }
     }
     [a, b] = [b, a];
@@ -238,7 +363,7 @@ function tinhLuoiChinh() {
 
   for (let i = 0; i < soO; i++) {
     const vx = a[i * 2], vy = a[i * 2 + 1];
-    if (Math.hypot(vx, vy) < NGUONG_COI_LA_KHONG) { luoiChinh[i * 2] = 0; luoiChinh[i * 2 + 1] = 0; }
+    if (Math.hypot(vx, vy) < HE_SO_LUOI.nguongCoiLaKhong) { luoiChinh[i * 2] = 0; luoiChinh[i * 2 + 1] = 0; }
     else { luoiChinh[i * 2] = vx; luoiChinh[i * 2 + 1] = vy; }
   }
 }
@@ -447,7 +572,6 @@ function ketThucNetVe() {
 // đường theo bước cố định, cộng dồn hướng cục bộ rồi chuẩn hoá mỗi ô.
 // Ghi vào luoiNguoiChoi rồi tính lại luoiChinh ngay sau khi vẽ xong 1 nét
 // (không tính liên tục mỗi frame cho đỡ tốn).
-const BUOC_LAY_MAU = 8;
 function ghiNhanNetVeVaoLuoi(duong) {
   const tongTheoO = new Map();
   for (let i = 0; i < duong.length - 1; i++) {
@@ -455,7 +579,7 @@ function ghiNhanNetVeVaoLuoi(duong) {
     const doan = V.tru(b2, a);
     const doDaiDoan = V.doDai(doan);
     if (doDaiDoan < 1e-3) continue;
-    const soBuoc = Math.max(1, Math.ceil(doDaiDoan / BUOC_LAY_MAU));
+    const soBuoc = Math.max(1, Math.ceil(doDaiDoan / HE_SO_LUOI.buocLayMau));
     for (let s = 0; s <= soBuoc; s++) {
       const p = V.cong(a, V.nhan(doan, s / soBuoc));
       const o = oTuViTri(p);
@@ -758,6 +882,72 @@ function vongLap(now) {
 
   requestAnimationFrame(vongLap);
 }
+
+// ============================================================
+// BẢNG ĐIỀU KHIỂN (#bangDieuKhien) — chỉnh trực tiếp hệ số tune, nằm
+// ngoài khung điện thoại nên không ảnh hưởng vùng chạm vẽ nét.
+// ============================================================
+function capNhatTongHeSo() {
+  document.getElementById('gt_tongHeSo').textContent =
+    (HE_SO_LUOI.heSoNoiTai + HE_SO_LUOI.heSoLanTruyen).toFixed(2);
+}
+
+const KHAI_BAO_THANH_TRUOT = [
+  { id: 'tocDoBay', obj: HE_SO, key: 'tocDoBay', soLeSo: 0 },
+  { id: 'doNhayHuong', obj: HE_SO, key: 'doNhayHuong', soLeSo: 1 },
+  { id: 'thoiGianDauDung', obj: HE_SO, key: 'thoiGianDauDung', soLeSo: 1 },
+  { id: 'thoiGianBayDi', obj: HE_SO, key: 'thoiGianBayDi', soLeSo: 1 },
+  { id: 'soVongLanToa', obj: HE_SO_LUOI, key: 'soVongLanToa', soLeSo: 0, sauKhiDoi: tinhLuoiChinh },
+  { id: 'heSoNoiTai', obj: HE_SO_LUOI, key: 'heSoNoiTai', soLeSo: 2, sauKhiDoi: () => { capNhatTongHeSo(); tinhLuoiChinh(); } },
+  { id: 'heSoLanTruyen', obj: HE_SO_LUOI, key: 'heSoLanTruyen', soLeSo: 2, sauKhiDoi: () => { capNhatTongHeSo(); tinhLuoiChinh(); } },
+  { id: 'nguongCoiLaKhong', obj: HE_SO_LUOI, key: 'nguongCoiLaKhong', soLeSo: 3, sauKhiDoi: tinhLuoiChinh },
+  { id: 'buocLayMau', obj: HE_SO_LUOI, key: 'buocLayMau', soLeSo: 0 },
+];
+
+function ganThanhTruot(khaiBao) {
+  const input = document.getElementById('ts_' + khaiBao.id);
+  const nhan = document.getElementById('gt_' + khaiBao.id);
+  function dongBo() {
+    input.value = khaiBao.obj[khaiBao.key];
+    nhan.textContent = khaiBao.obj[khaiBao.key].toFixed(khaiBao.soLeSo);
+  }
+  dongBo();
+  input.addEventListener('input', () => {
+    khaiBao.obj[khaiBao.key] = Number(input.value);
+    nhan.textContent = khaiBao.obj[khaiBao.key].toFixed(khaiBao.soLeSo);
+    if (khaiBao.sauKhiDoi) khaiBao.sauKhiDoi();
+  });
+  khaiBao.dongBo = dongBo; // dùng lại khi bấm "Khôi phục mặc định"
+}
+KHAI_BAO_THANH_TRUOT.forEach(ganThanhTruot);
+capNhatTongHeSo();
+
+const canhOMacDinh = GRID.canh;
+const heSoMacDinh = { ...HE_SO };
+const heSoLuoiMacDinh = { ...HE_SO_LUOI };
+
+const chonCanhO = document.getElementById('ts_canhO');
+chonCanhO.value = String(GRID.canh);
+document.getElementById('gt_canhO').textContent = GRID.canh;
+chonCanhO.addEventListener('change', () => {
+  const canhMoi = Number(chonCanhO.value);
+  document.getElementById('gt_canhO').textContent = canhMoi;
+  doiKichThuocO(canhMoi);
+});
+
+document.getElementById('btnKhoiPhucMacDinh').addEventListener('click', () => {
+  Object.assign(HE_SO, heSoMacDinh);
+  Object.assign(HE_SO_LUOI, heSoLuoiMacDinh);
+  KHAI_BAO_THANH_TRUOT.forEach(k => k.dongBo());
+  capNhatTongHeSo();
+  if (GRID.canh !== canhOMacDinh) {
+    chonCanhO.value = String(canhOMacDinh);
+    document.getElementById('gt_canhO').textContent = canhOMacDinh;
+    doiKichThuocO(canhOMacDinh);
+  } else {
+    tinhLuoiChinh();
+  }
+});
 
 taiLevel(1);
 requestAnimationFrame(vongLap);
