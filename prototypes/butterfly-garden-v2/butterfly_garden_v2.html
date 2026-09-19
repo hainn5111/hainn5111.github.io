@@ -12,7 +12,6 @@
     display: flex; align-items: center; justify-content: center;
   }
 
-  /* Khung dọc cố định 1080x1920 (tỉ lệ điện thoại), co lại vừa màn PC */
   #khung {
     position: relative;
     width: min(calc(100vw - 24px), calc((100dvh - 24px) * 1080 / 1920));
@@ -81,10 +80,19 @@
 
 <script>
 /* ============================================================
-   BUTTERFLY GARDEN v2 - prototype vật lý gió theo swipe (bản viết lại
-   toàn bộ theo spec chi tiết mới, KHÔNG dùng lưới ô vuông như bản
-   trước — đây là mô hình continuous force-field bám sát polyline nét
-   vẽ). Ưu tiên đúng vật lý hơn là đẹp. Toàn bộ hệ số ở HE_SO_VAT_LY.
+   BUTTERFLY GARDEN v2 - bản 2 của v2: VẬT LÝ GIÓ DÙNG LƯỚI Ô VUÔNG
+   (kiến trúc y hệt prototypes/butterfly-garden/index.html — Jacobi
+   diffusion trên lưới, có suy hao theo thời gian) thay cho continuous
+   polyline force-field của bản v2 đầu. Vẫn giữ CHƠI LIÊN TỤC — không
+   chia phase Thiết lập/Play như bản lưới v1, vẽ là bướm phản ứng ngay.
+
+   Giữ nguyên từ bản v2 đầu: ngân mực (ink budget), tự cắt nét khoá vẽ,
+   vòng đời bướm (tự do/đúng hoa/sai hoa/đậu/bay mất), 3 vật cản (bụi
+   cây/đá/hoa dại), xếp sao. BỎ cơ chế "hỗn loạn" (chaos) kiểu currents
+   chồng nhau — không tương thích với mô hình lưới (sau khi lan toả,
+   các nguồn gió đã hoà làm 1, không còn tách được từng "dòng" để so
+   góc nữa). Đá giờ chặn gió tự nhiên qua topology lưới (ô trong đá luôn
+   lặng gió + không lan truyền qua) thay vì raycast line-of-sight.
    ============================================================ */
 
 const canvas = document.getElementById('canvas');
@@ -121,62 +129,7 @@ const V = {
   },
 };
 
-function xoayVector(v, goc) {
-  const c = Math.cos(goc), s = Math.sin(goc);
-  return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
-}
-
-function gocGiuaHaiVector(u, v) {
-  const mu = Math.hypot(u.x, u.y), mv = Math.hypot(v.x, v.y);
-  if (mu < 1e-6 || mv < 1e-6) return 0;
-  const cosGoc = Math.max(-1, Math.min(1, (u.x * v.x + u.y * v.y) / (mu * mv)));
-  return Math.acos(cosGoc) * 180 / Math.PI;
-}
-
-// hash chuỗi -> số nguyên 32-bit không âm, THUẦN TUÝ (không random), dùng
-// để tạo "nhiễu loạn" xác định được (deterministic) — cùng 1 tổ hợp dòng
-// gió chồng nhau ở cùng 1 thời điểm luôn cho ra đúng 1 kết quả.
-function hash32(str) {
-  let h = 5381;
-  for (let i = 0; i < str.length; i++) h = ((h * 33) ^ str.charCodeAt(i)) >>> 0;
-  return h >>> 0;
-}
-
-// khoảng cách từ điểm p tới đoạn thẳng a-b (dùng cho occlusion bởi đá)
-function khoangCachDiemDenDoan(p, a, b) {
-  const ab = V.tru(b, a);
-  const doDaiAB2 = ab.x * ab.x + ab.y * ab.y;
-  let t = doDaiAB2 < 1e-6 ? 0 : ((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / doDaiAB2;
-  t = Math.max(0, Math.min(1, t));
-  const diem = { x: a.x + ab.x * t, y: a.y + ab.y * t };
-  return Math.hypot(p.x - diem.x, p.y - diem.y);
-}
-
-// điểm gần nhất trên toàn bộ polyline (đoạn nào gần nhất) — trả về
-// khoảng cách, hướng tiếp tuyến của đoạn đó, và hình chiếu (dùng để
-// kiểm tra occlusion bởi đá)
-function doanGanNhat(p, duong) {
-  let minD = Infinity, huong = { x: 0, y: 0 }, hinhChieu = duong[0] || { x: 0, y: 0 };
-  for (let i = 0; i < duong.length - 1; i++) {
-    const a = duong[i], b = duong[i + 1];
-    const ab = V.tru(b, a);
-    const doDaiAB2 = ab.x * ab.x + ab.y * ab.y;
-    let t = doDaiAB2 < 1e-6 ? 0 : ((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / doDaiAB2;
-    t = Math.max(0, Math.min(1, t));
-    const hc = { x: a.x + ab.x * t, y: a.y + ab.y * t };
-    const d = Math.hypot(p.x - hc.x, p.y - hc.y);
-    if (d < minD) { minD = d; huong = V.chuanHoa(ab); hinhChieu = hc; }
-  }
-  return { khoangCach: minD, huong, hinhChieu };
-}
-
-function doDaiDaThuc(duong) {
-  let tong = 0;
-  for (let i = 0; i < duong.length - 1; i++) tong += V.doDai(V.tru(duong[i + 1], duong[i]));
-  return tong;
-}
-
-// ---------- Tự cắt nét vẽ (self-intersection) ----------
+// ---------- Tự cắt nét vẽ (self-intersection) — giữ nguyên từ bản đầu ----------
 function huongDinhHuong(a, b, c) { return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x); }
 function diemTrenDoan(a, b, p) {
   return Math.min(a.x, b.x) <= p.x && p.x <= Math.max(a.x, b.x) &&
@@ -209,78 +162,198 @@ function kiemTraTuCat(duong) {
   }
   return null;
 }
+function doDaiDaThuc(duong) {
+  let tong = 0;
+  for (let i = 0; i < duong.length - 1; i++) tong += V.doDai(V.tru(duong[i + 1], duong[i]));
+  return tong;
+}
 
 // ============================================================
-// MÀU SẮC + HỆ SỐ VẬT LÝ
+// MÀU SẮC
 // ============================================================
 const MAU = { cam: '#E88A5E', tim: '#9B7BB8', do: '#C96565', vang: '#D9B04A' };
 const MAU_BUI = '#A4B896', MAU_DA = '#7A7566';
 
-const HE_SO_VAT_LY = {
-  banKinhAnhHuong: 100,     // R (px) — bán kính ảnh hưởng của mỗi điểm trên nét gió
-  doManhMoiPx: 0.8,         // hệ số: 1px chiều dài nét vẽ góp bao nhiêu vào độ mạnh tối đa
-  doManhToiDaTran: 420,     // trần độ mạnh tối đa (chặn nét quá dài văng bướm)
-  thoiGianSongGio: 4,       // (giây) LIFETIME của 1 dòng gió
-  heSoGiam: 8,              // hệ số damping: van = lerp(van, gioMucTieu, dt*heSoGiam)
-  nguongManhChaos: 0.3,     // "dòng mạnh" = độ mạnh hiện tại > 30% độ mạnh tối đa của nó
-  nguongFalloffChaos: 0.3,  // và falloff theo khoảng cách > 0.3
-  gocChaosToiThieu: 60,     // (độ) góc giữa 2 dòng mạnh vượt mức này -> hỗn loạn
-  bienDoJitter: 15,         // (độ) biên độ dao động jitter khi hỗn loạn
-  donViHutHoa: 200,         // đơn vị quy đổi cho "0.3 strength" hút của hoa dại
+// ============================================================
+// LƯỚI GIÓ (kiến trúc y hệt bản lưới v1) — xem prototypes/butterfly-garden
+// - luoiLevel/coDinhLevel : preset gió của level, cố định vĩnh viễn.
+// - luoiNguoiChoi/coDinhNguoiChoi/thoiDiemGioNguoiChoi : gió người chơi
+//   vẽ, SUY HAO dần kể từ mốc thời gian nó được ghi (tức là NGAY KHI VẼ
+//   XONG — nhả tay ra — chứ không phải từ lúc chạm xuống bắt đầu vẽ).
+// - bChanGio : ô nằm trong đá — luôn lặng gió, và cũng chặn lan toả đi
+//   qua nó (tạo "vùng khuất gió" tự nhiên từ topology lưới).
+// - luoiChinh : kết quả lan toả (Jacobi) cuối cùng, bướm lấy gió từ đây.
+// ============================================================
+const GRID = { canh: 40, cols: LOGICAL_W / 40, rows: LOGICAL_H / 40 }; // 27 x 48
+let soO = GRID.cols * GRID.rows;
+
+function oIndex(cx, cy) { return cy * GRID.cols + cx; }
+function oTuViTri(p) {
+  const cx = Math.floor(p.x / GRID.canh), cy = Math.floor(p.y / GRID.canh);
+  if (cx < 0 || cx >= GRID.cols || cy < 0 || cy >= GRID.rows) return null;
+  return { cx, cy };
+}
+
+let luoiLevel, coDinhLevel, luoiNguoiChoi, coDinhNguoiChoi, thoiDiemGioNguoiChoi, luoiChinh, bChanGio;
+let boDemA, boDemB;
+
+function taoLuoiTrong() {
+  luoiLevel = new Float32Array(soO * 2);
+  coDinhLevel = new Uint8Array(soO);
+  luoiNguoiChoi = new Float32Array(soO * 2);
+  coDinhNguoiChoi = new Uint8Array(soO);
+  thoiDiemGioNguoiChoi = new Float32Array(soO);
+  luoiChinh = new Float32Array(soO * 2);
+  bChanGio = new Uint8Array(soO);
+}
+function khoiTaoBoNhoLuoi() {
+  soO = GRID.cols * GRID.rows;
+  boDemA = new Float32Array(soO * 2);
+  boDemB = new Float32Array(soO * 2);
+  taoLuoiTrong();
+}
+khoiTaoBoNhoLuoi();
+
+// đặt 1 vùng chữ nhật (toạ độ logic px) thành gió cố định ban đầu của level
+function datGioLevel(x0, y0, x1, y1, huong) {
+  const h = V.chuanHoa(huong);
+  const c0 = oTuViTri({ x: x0, y: y0 }) || { cx: 0, cy: 0 };
+  const c1 = oTuViTri({ x: x1 - 1, y: y1 - 1 }) || { cx: GRID.cols - 1, cy: GRID.rows - 1 };
+  for (let cy = c0.cy; cy <= c1.cy; cy++) {
+    for (let cx = c0.cx; cx <= c1.cx; cx++) {
+      const i = oIndex(cx, cy);
+      luoiLevel[i * 2] = h.x; luoiLevel[i * 2 + 1] = h.y;
+      coDinhLevel[i] = 1;
+    }
+  }
+}
+
+// đánh dấu các ô nằm trong đá — đá chặn CẢ gió (bChanGio) lẫn bướm
+// (xử lý va chạm bướm riêng ở vaChamVatCan, dùng bán kính thật của đá).
+function tinhBChanGio(vatCan) {
+  bChanGio.fill(0);
+  const nuaCanh = GRID.canh / 2;
+  for (let cy = 0; cy < GRID.rows; cy++) {
+    for (let cx = 0; cx < GRID.cols; cx++) {
+      const tam = { x: cx * GRID.canh + nuaCanh, y: cy * GRID.canh + nuaCanh };
+      for (const o of vatCan) {
+        if (o.loai === 'da' && Math.hypot(tam.x - o.x, tam.y - o.y) < o.r) { bChanGio[oIndex(cx, cy)] = 1; break; }
+      }
+    }
+  }
+}
+
+const LAN_CAN_8 = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
+
+const HE_SO_LUOI = {
+  soVongLanToa: 120,
+  heSoNoiTai: 0.4,
+  heSoLanTruyen: 0.6,
+  nguongCoiLaKhong: 0.02,
+  buocLayMau: 8,
+  tiLeNguoiChoiKhiChong: 1,     // ô vừa có gió level vừa có nét người vẽ: 1 = nét vẽ đè lên
+  thoiGianSongNetNguoiChoi: 6,  // (giây) nét vẽ người chơi phai hết sau chừng này
 };
 
-function doManhHienTai(dong, now) {
-  const tuoi = now - dong.thoiDiemTao;
-  if (tuoi < 0 || tuoi >= dong.thoiGianSong) return 0;
-  const tiLe = Math.max(0, 1 - tuoi / dong.thoiGianSong);
-  return dong.doManhToiDa * tiLe * tiLe; // ease-out: pow(1-age/life, 2)
-}
-
-function bBiChanBoiDa(pA, pB, vatCan) {
-  return vatCan.some(o => o.loai === 'da' && khoangCachDiemDenDoan(o, pA, pB) < o.r);
-}
-
-// tổng lực gió từ CÁC DÒNG GIÓ (chưa gồm gió nền) tại 1 vị trí, và có
-// đang ở "vùng hỗn loạn" hay không (từ ≥2 dòng mạnh chéo hướng nhau)
-function tongGioTaiViTri(p, now, vatCan) {
-  let tong = { x: 0, y: 0 };
-  const manhs = [];
-  for (const c of state.dongGioDangHoatDong) {
-    const doManhGoc = doManhHienTai(c, now);
-    if (doManhGoc <= 0) continue;
-    const { khoangCach, huong, hinhChieu } = doanGanNhat(p, c.duong);
-    const falloff = Math.max(0, 1 - khoangCach / HE_SO_VAT_LY.banKinhAnhHuong);
-    if (falloff <= 0) continue;
-    if (bBiChanBoiDa(hinhChieu, p, vatCan)) continue; // đá chắn gió (wind shadow)
-    const doManhTaiDiem = doManhGoc * falloff;
-    tong = V.cong(tong, V.nhan(huong, doManhTaiDiem));
-    if (doManhGoc > HE_SO_VAT_LY.nguongManhChaos * c.doManhToiDa && falloff > HE_SO_VAT_LY.nguongFalloffChaos) {
-      manhs.push({ huong, id: c.id });
+// Jacobi relaxation có suy hao — xem giải thích chi tiết ở bản lưới v1.
+// Gọi khi: tải level, vẽ xong 1 nét, và định kỳ mỗi 500ms trong khi còn
+// nét nào đang suy hao (KHÔNG chạy mỗi frame).
+function tinhLuoiChinh() {
+  let a = boDemA, b = boDemB;
+  a.fill(0);
+  for (let i = 0; i < soO; i++) {
+    if (bChanGio[i]) continue; // đá: luôn lặng gió, bỏ qua fixed level/người chơi ở đây
+    if (coDinhNguoiChoi[i]) {
+      const tuoi = state.thoiGian - thoiDiemGioNguoiChoi[i];
+      const tiLeConLai = Math.max(0, 1 - tuoi / HE_SO_LUOI.thoiGianSongNetNguoiChoi);
+      const heSoSuyHao = tiLeConLai * tiLeConLai;
+      if (heSoSuyHao < 0.02) {
+        coDinhNguoiChoi[i] = 0;
+      } else if (coDinhLevel[i]) {
+        const t = HE_SO_LUOI.tiLeNguoiChoiKhiChong;
+        a[i * 2] = luoiNguoiChoi[i * 2] * heSoSuyHao * t + luoiLevel[i * 2] * (1 - t);
+        a[i * 2 + 1] = luoiNguoiChoi[i * 2 + 1] * heSoSuyHao * t + luoiLevel[i * 2 + 1] * (1 - t);
+      } else {
+        a[i * 2] = luoiNguoiChoi[i * 2] * heSoSuyHao;
+        a[i * 2 + 1] = luoiNguoiChoi[i * 2 + 1] * heSoSuyHao;
+      }
+    }
+    if (!coDinhNguoiChoi[i] && coDinhLevel[i]) {
+      a[i * 2] = luoiLevel[i * 2]; a[i * 2 + 1] = luoiLevel[i * 2 + 1];
     }
   }
-  let honLoan = false;
-  for (let i = 0; i < manhs.length && !honLoan; i++) {
-    for (let j = i + 1; j < manhs.length; j++) {
-      if (gocGiuaHaiVector(manhs[i].huong, manhs[j].huong) > HE_SO_VAT_LY.gocChaosToiThieu) { honLoan = true; break; }
+
+  for (let vong = 0; vong < HE_SO_LUOI.soVongLanToa; vong++) {
+    for (let cy = 0; cy < GRID.rows; cy++) {
+      for (let cx = 0; cx < GRID.cols; cx++) {
+        const i = oIndex(cx, cy);
+        if (bChanGio[i]) { b[i * 2] = 0; b[i * 2 + 1] = 0; continue; }
+        if (coDinhNguoiChoi[i] || coDinhLevel[i]) {
+          b[i * 2] = a[i * 2]; b[i * 2 + 1] = a[i * 2 + 1];
+          continue;
+        }
+        let sx = 0, sy = 0, dem = 0;
+        for (const [dx, dy] of LAN_CAN_8) {
+          const nx = cx + dx, ny = cy + dy;
+          if (nx < 0 || nx >= GRID.cols || ny < 0 || ny >= GRID.rows) continue;
+          const j = oIndex(nx, ny);
+          if (bChanGio[j]) continue; // đá chặn lan toả — không hút gió từ phía sau đá
+          sx += a[j * 2]; sy += a[j * 2 + 1]; dem++;
+        }
+        const tbX = dem ? sx / dem : 0, tbY = dem ? sy / dem : 0;
+        b[i * 2] = a[i * 2] * HE_SO_LUOI.heSoNoiTai + tbX * HE_SO_LUOI.heSoLanTruyen;
+        b[i * 2 + 1] = a[i * 2 + 1] * HE_SO_LUOI.heSoNoiTai + tbY * HE_SO_LUOI.heSoLanTruyen;
+      }
     }
+    [a, b] = [b, a];
   }
-  return { tong, honLoan, manhs };
+
+  for (let i = 0; i < soO; i++) {
+    const vx = a[i * 2], vy = a[i * 2 + 1];
+    if (Math.hypot(vx, vy) < HE_SO_LUOI.nguongCoiLaKhong) { luoiChinh[i * 2] = 0; luoiChinh[i * 2 + 1] = 0; }
+    else { luoiChinh[i * 2] = vx; luoiChinh[i * 2 + 1] = vy; }
+  }
 }
 
-// jitter xác định (deterministic): hash(id các dòng đang chồng + thời
-// gian) -> pha + tần số dao động riêng cho tổ hợp đó. KHÔNG dùng
-// Math.random ở đây — lặp lại đúng swipe ở đúng thời điểm ra đúng kết quả.
-function jitterGoc(manhs, now) {
-  const chuoi = manhs.map(m => m.id).sort((a, b) => a - b).join(',');
-  const h = hash32(chuoi);
-  const pha = (h % 6283) / 1000;
-  const tanSo = 2 + (h % 300) / 100;
-  const bienDo = HE_SO_VAT_LY.bienDoJitter * Math.PI / 180;
-  return Math.sin(now * tanSo + pha) * bienDo;
+function gioTaiViTri(p) {
+  const o = oTuViTri(p);
+  if (!o) return { x: 0, y: 0 };
+  const i = oIndex(o.cx, o.cy);
+  return { x: luoiChinh[i * 2], y: luoiChinh[i * 2 + 1] };
+}
+
+// xấp xỉ 1 nét vẽ thành vector cho từng ô lưới nó đi qua
+function apDungNetVeVaoLuoi(duong, luoiDich, coDinhDich, thoiDiemDich) {
+  const tongTheoO = new Map();
+  for (let i = 0; i < duong.length - 1; i++) {
+    const a = duong[i], b2 = duong[i + 1];
+    const doan = V.tru(b2, a);
+    const doDaiDoan = V.doDai(doan);
+    if (doDaiDoan < 1e-3) continue;
+    const soBuoc = Math.max(1, Math.ceil(doDaiDoan / HE_SO_LUOI.buocLayMau));
+    for (let s = 0; s <= soBuoc; s++) {
+      const p = V.cong(a, V.nhan(doan, s / soBuoc));
+      const o = oTuViTri(p);
+      if (!o) continue;
+      const i2 = oIndex(o.cx, o.cy);
+      const hienTai = tongTheoO.get(i2) || { x: 0, y: 0 };
+      hienTai.x += doan.x; hienTai.y += doan.y;
+      tongTheoO.set(i2, hienTai);
+    }
+  }
+  for (const [i2, tong] of tongTheoO) {
+    if (bChanGio[i2]) continue; // vẽ đè lên đá thì không có tác dụng
+    const d = Math.hypot(tong.x, tong.y);
+    if (d < 1e-4) continue;
+    luoiDich[i2 * 2] = tong.x / d;
+    luoiDich[i2 * 2 + 1] = tong.y / d;
+    coDinhDich[i2] = 1;
+    if (thoiDiemDich) thoiDiemDich[i2] = state.thoiGian; // bắt đầu suy hao từ NGAY LÚC VẼ XONG
+  }
 }
 
 // ============================================================
-// VA CHẠM VẬT CẢN (bụi cây + đá chặn bướm, đá còn chặn cả gió ở trên)
+// VA CHẠM VẬT CẢN (bụi cây + đá chặn bướm)
 // ============================================================
 function vaChamVatCan(b, o) {
   const dx = b.vi.x - o.x, dy = b.vi.y - o.y;
@@ -290,7 +363,7 @@ function vaChamVatCan(b, o) {
     b.vi.x = o.x + nx * (o.r + 1);
     b.vi.y = o.y + ny * (o.r + 1);
     const vaoTrong = b.van.x * nx + b.van.y * ny;
-    if (vaoTrong < 0) { b.van.x -= vaoTrong * nx; b.van.y -= vaoTrong * ny; } // trượt quanh rìa
+    if (vaoTrong < 0) { b.van.x -= vaoTrong * nx; b.van.y -= vaoTrong * ny; }
   }
 }
 
@@ -313,17 +386,14 @@ function viTriNgauNhienTranh(vungHoa, vatCan, hop) {
 }
 
 // ============================================================
-// CẤU HÌNH 3 LEVEL — toạ độ tuyệt đối trong hệ 1080x1920
+// CẤU HÌNH 3 LEVEL — toạ độ tuyệt đối trong hệ 1080x1920.
+// gioLevel: các dải gió cố định đặt sẵn (thay cho 1 vector gió nền toàn
+// cục của bản polyline) — lan toả ra phần còn lại của lưới qua Jacobi.
 // ============================================================
-function gioNenTai(t, gioNen) {
-  if (gioNen.kieu === 'tinh') return gioNen.vector;
-  return { x: Math.sin(t * Math.PI / 4) * gioNen.bienDo, y: 0 }; // đảo chiều mỗi 4s
-}
-
 const CAU_HINH_LEVEL = {
   1: {
     ten: 'Dễ', tenHienThi: 'Sáng đầu tiên', mucNgan: 800,
-    gioNen: { kieu: 'tinh', vector: { x: 0, y: 35 } },
+    gioLevel: [{ x0: 0, y0: 120, x1: 1080, y1: 260, huong: { x: 0, y: 1 } }],
     vungHoa: [{ mau: 'cam', x: 540, y: 1550, r: 190 }],
     vatCan: [],
     taoButterflies() {
@@ -333,7 +403,10 @@ const CAU_HINH_LEVEL = {
   },
   2: {
     ten: 'Khó', tenHienThi: 'Vườn gió chéo', mucNgan: 600,
-    gioNen: { kieu: 'tinh', vector: { x: 110, y: 0 } },
+    gioLevel: [
+      { x0: 0, y0: 0, x1: 160, y1: 1920, huong: { x: 1, y: 0.6 } },
+      { x0: 920, y0: 0, x1: 1080, y1: 1920, huong: { x: -1, y: -0.6 } },
+    ],
     vungHoa: [{ mau: 'cam', x: 230, y: 340, r: 170 }, { mau: 'do', x: 850, y: 1580, r: 170 }],
     vatCan: [],
     taoButterflies() {
@@ -343,7 +416,11 @@ const CAU_HINH_LEVEL = {
   },
   3: {
     ten: 'Siêu khó', tenHienThi: 'Sau tảng đá', mucNgan: 500,
-    gioNen: { kieu: 'daoDong', bienDo: 85 },
+    gioLevel: [
+      { x0: 0, y0: 700, x1: 1080, y1: 800, huong: { x: 1, y: 0 } },
+      { x0: 0, y0: 1100, x1: 1080, y1: 1200, huong: { x: -1, y: 0 } },
+      { x0: 460, y0: 0, x1: 620, y1: 400, huong: { x: 0, y: 1 } },
+    ],
     vungHoa: [
       { mau: 'cam', x: 220, y: 300, r: 140 }, { mau: 'tim', x: 860, y: 300, r: 140 },
       { mau: 'do', x: 220, y: 1650, r: 140 }, { mau: 'vang', x: 860, y: 1650, r: 140 },
@@ -361,14 +438,21 @@ const DIEM_CO = Array.from({ length: 160 }, () => ({
   x: Math.random() * LOGICAL_W, y: Math.random() * LOGICAL_H, r: 1 + Math.random() * 1.4,
 }));
 
+const HE_SO = {
+  tocDoBay: 260,        // (px logic/giây) tốc độ bay khi thuận theo luồng gió
+  doNhayHuong: 6,       // vận tốc "bám" theo hướng gió mới — cao cho nhạy
+  thoiGianDauDung: 2,   // (giây) đứng đúng hoa để "đậu"
+  thoiGianBayDi: 5,     // (giây) đứng sai hoa quá lâu thì bay mất
+  donViHutHoa: 200,     // đơn vị quy đổi cho lực hút hoa dại
+};
+
 // ============================================================
-// TRẠNG THÁI GAME
+// TRẠNG THÁI GAME — KHÔNG chia phase Thiết lập/Play, chơi liên tục:
+// vẽ nét là bướm phản ứng ngay lập tức, không cần bấm nút "bắt đầu".
 // ============================================================
 const state = {
   level: 1, thoiGian: 0, mucNgan: 800, mucConLai: 800,
-  dongGioDangHoatDong: [], idGioTiepTheo: 1,
-  buom: [], hatLa: [], hatBuiTamThoi: [], diemHonLoanKhung: [],
-  diemFlash: null, ketQua: null,
+  buom: [], hatLa: [], netVeHienThi: [], diemFlash: null, ketQua: null,
 };
 
 function taiLevel(n) {
@@ -377,13 +461,15 @@ function taiLevel(n) {
   state.thoiGian = 0;
   state.mucNgan = cfg.mucNgan;
   state.mucConLai = cfg.mucNgan;
-  state.dongGioDangHoatDong = [];
-  state.idGioTiepTheo = 1;
-  state.hatBuiTamThoi = [];
-  state.diemHonLoanKhung = [];
+  state.netVeHienThi = [];
   state.diemFlash = null;
   state.ketQua = null;
   dangVe = false; dangVeBiKhoa = false; duongVeHienTai = [];
+
+  taoLuoiTrong();
+  for (const v of cfg.gioLevel) datGioLevel(v.x0, v.y0, v.x1, v.y1, v.huong);
+  tinhBChanGio(cfg.vatCan);
+  tinhLuoiChinh();
 
   state.buom = cfg.taoButterflies(cfg).map(({ mau, viGoc }) => ({
     mau, vi: { ...viGoc }, van: { x: 0, y: 0 }, goc: Math.random() * Math.PI * 2,
@@ -408,7 +494,8 @@ document.querySelectorAll('#levelSelect button').forEach(btn => {
 });
 
 // ============================================================
-// INPUT — Pointer Events (touch + mouse), 1 điểm chạm duy nhất
+// INPUT — Pointer Events, 1 điểm chạm duy nhất, CHƠI LIÊN TỤC (vẽ bất
+// cứ lúc nào miễn còn mực, không có khái niệm "phase")
 // ============================================================
 let dangVe = false, dangVeBiKhoa = false, duongVeHienTai = [];
 
@@ -445,33 +532,41 @@ function ketThucNet() {
   if (duongVeHienTai.length >= 3) {
     const doDai = doDaiDaThuc(duongVeHienTai);
     if (doDai > 1) {
-      const doManhToiDa = Math.min(HE_SO_VAT_LY.doManhToiDaTran, doDai * HE_SO_VAT_LY.doManhMoiPx);
-      state.dongGioDangHoatDong.push({
-        id: state.idGioTiepTheo++, duong: duongVeHienTai, doDaiDuong: doDai,
-        doManhToiDa, thoiDiemTao: state.thoiGian, thoiGianSong: HE_SO_VAT_LY.thoiGianSongGio,
-      });
-      state.mucConLai -= doDai; // cho phép âm nếu nét cuối cùng vượt ngân — sẽ trừ sao khi tính kết quả
+      // GHI VÀO LƯỚI + TÍNH MỐC THỜI GIAN SUY HAO ngay tại đây — tức là
+      // NGAY KHI VẼ XONG (nhả tay), không phải từ lúc bắt đầu chạm xuống.
+      apDungNetVeVaoLuoi(duongVeHienTai, luoiNguoiChoi, coDinhNguoiChoi, thoiDiemGioNguoiChoi);
+      tinhLuoiChinh();
+      state.mucConLai -= doDai;
+      state.netVeHienThi.push({ duong: duongVeHienTai, thoiDiemTao: state.thoiGian });
     }
   }
   duongVeHienTai = [];
   dangVeBiKhoa = false;
 }
 
+// nét vẽ suy hao dần theo thời gian NGAY CẢ KHI không vẽ nét mới — cần
+// chủ động tính lại lưới định kỳ (không phải mỗi frame) để thấy phai màu.
+setInterval(() => {
+  let coNetDangSong = false;
+  for (let i = 0; i < soO; i++) { if (coDinhNguoiChoi[i]) { coNetDangSong = true; break; } }
+  if (coNetDangSong) tinhLuoiChinh();
+}, 500);
+
 // ============================================================
-// CẬP NHẬT DWELL / TRẠNG THÁI VÒNG ĐỜI BƯỚM
+// DWELL / VÒNG ĐỜI BƯỚM
 // ============================================================
 function capNhatDwell(b, cfg, dt) {
   const zone = cfg.vungHoa.find(z => Math.hypot(b.vi.x - z.x, b.vi.y - z.y) < z.r);
   if (zone && zone.mau === b.mau) {
     b.dwellDung += dt; b.dwellSai = 0; b.trangThai = 'dungHoa';
-    if (b.dwellDung >= 2) {
+    if (b.dwellDung >= HE_SO.thoiGianDauDung) {
       b.trangThai = 'daDau';
       b.vi = { x: zone.x, y: zone.y };
       b.van = { x: 0, y: 0 };
     }
   } else if (zone && zone.mau !== b.mau) {
     b.dwellSai += dt; b.dwellDung = 0; b.trangThai = 'saiHoa';
-    if (b.dwellSai >= 5) { b.trangThai = 'bayMat'; b.bayMatBatDau = state.thoiGian; }
+    if (b.dwellSai >= HE_SO.thoiGianBayDi) { b.trangThai = 'bayMat'; b.bayMatBatDau = state.thoiGian; }
   } else {
     b.dwellDung = 0; b.dwellSai = 0; b.trangThai = 'tuDo';
   }
@@ -484,11 +579,9 @@ function capNhat(dt) {
   if (state.ketQua) return;
   state.thoiGian += dt;
 
-  state.dongGioDangHoatDong = state.dongGioDangHoatDong.filter(c => state.thoiGian - c.thoiDiemTao < c.thoiGianSong);
+  state.netVeHienThi = state.netVeHienThi.filter(n => state.thoiGian - n.thoiDiemTao < HE_SO_LUOI.thoiGianSongNetNguoiChoi);
 
   const cfg = CAU_HINH_LEVEL[state.level];
-  const gioNenHienTai = gioNenTai(state.thoiGian, cfg.gioNen);
-  state.diemHonLoanKhung = [];
 
   for (const b of state.buom) {
     if (b.trangThai === 'daDau') { b.phaCanh += dt * 1.2; continue; }
@@ -507,8 +600,8 @@ function capNhat(dt) {
     }
     if (b.coolDownHoa > 0) b.coolDownHoa = Math.max(0, b.coolDownHoa - dt);
 
-    const { tong, honLoan, manhs } = tongGioTaiViTri(b.vi, state.thoiGian, cfg.vatCan);
-    let luc = V.cong(gioNenHienTai, tong);
+    const gio = gioTaiViTri(b.vi);
+    let luc = V.nhan(gio, HE_SO.tocDoBay);
 
     let batDauHutHoa = null;
     for (const o of cfg.vatCan) {
@@ -517,22 +610,16 @@ function capNhat(dt) {
       if (d < 18 && b.coolDownHoa <= 0) { batDauHutHoa = o; break; }
       if (d < o.r) {
         const h = d < 1e-6 ? { x: 0, y: 0 } : { x: (o.x - b.vi.x) / d, y: (o.y - b.vi.y) / d };
-        luc = V.cong(luc, V.nhan(h, 0.3 * HE_SO_VAT_LY.donViHutHoa));
+        luc = V.cong(luc, V.nhan(h, 0.3 * HE_SO.donViHutHoa));
       }
-    }
-
-    if (honLoan) {
-      state.diemHonLoanKhung.push({ x: b.vi.x, y: b.vi.y });
-      if (Math.random() < 0.3) {
-        state.hatBuiTamThoi.push({ x: b.vi.x + (Math.random() - 0.5) * 30, y: b.vi.y + (Math.random() - 0.5) * 30, tuoi: 0, doTuoiToiDa: 0.6 });
-      }
-      luc = xoayVector(luc, jitterGoc(manhs, state.thoiGian));
     }
 
     if (batDauHutHoa) {
       b.hoaDangHut = batDauHutHoa; b.thoiGianHut = 0; b.van = { x: 0, y: 0 };
     } else {
-      const nhay = Math.min(1, dt * HE_SO_VAT_LY.heSoGiam);
+      // damping cao: van tiến về đúng gio*tocDo, gio=0 -> bướm dừng hẳn,
+      // KHÔNG trôi theo quán tính (đúng yêu cầu ban đầu của bản polyline).
+      const nhay = 1 - Math.exp(-HE_SO.doNhayHuong * dt);
       b.van.x += (luc.x - b.van.x) * nhay;
       b.van.y += (luc.y - b.van.y) * nhay;
       b.vi = V.cong(b.vi, V.nhan(b.van, dt));
@@ -547,19 +634,15 @@ function capNhat(dt) {
     capNhatDwell(b, cfg, dt);
   }
 
-  for (const h of state.hatBuiTamThoi) h.tuoi += dt;
-  state.hatBuiTamThoi = state.hatBuiTamThoi.filter(h => h.tuoi < h.doTuoiToiDa);
-
-  capNhatHatLa(dt, gioNenHienTai);
+  capNhatHatLa(dt);
   kiemTraKetThuc();
 }
 
-function capNhatHatLa(dt, gioNen) {
+function capNhatHatLa(dt) {
   for (const la of state.hatLa) {
-    const { tong } = tongGioTaiViTri(la, state.thoiGian, []);
-    const gio = V.cong(gioNen, tong);
-    la.x += gio.x * dt * 0.35;
-    la.y += gio.y * dt * 0.35;
+    const gio = gioTaiViTri(la);
+    la.x += gio.x * HE_SO.tocDoBay * dt * 0.35;
+    la.y += gio.y * HE_SO.tocDoBay * dt * 0.35;
     la.goc += la.tocDoXoay * dt;
     if (la.x < -20) la.x = LOGICAL_W + 20; if (la.x > LOGICAL_W + 20) la.x = -20;
     if (la.y < -20) la.y = LOGICAL_H + 20; if (la.y > LOGICAL_H + 20) la.y = -20;
@@ -582,8 +665,10 @@ function kiemTraKetThuc() {
 
   if (bayMat >= 2) { hienThiKetQua('thuaBayMat'); return; }
   if (daDau + bayMat === tong) { hienThiKetQua(bayMat === 0 ? 'thang' : 'thangMatBuom'); return; }
-  if (state.mucConLai <= 0 && state.dongGioDangHoatDong.length === 0 && daDau < tong) {
-    hienThiKetQua('thuaHetMuc');
+  if (state.mucConLai <= 0 && daDau < tong) {
+    let coNetDangSong = false;
+    for (let i = 0; i < soO; i++) { if (coDinhNguoiChoi[i]) { coNetDangSong = true; break; } }
+    if (!coNetDangSong) hienThiKetQua('thuaHetMuc');
   }
 }
 
@@ -618,9 +703,9 @@ function ve() {
   veCoDam();
   veVatCan(cfg.vatCan);
   veVungHoa(cfg.vungHoa);
+  veGioLevel();
   veHatLa();
-  veHonLoan();
-  veDongGioMoDan();
+  veNetVeHienThi();
   if (dangVe) veNetDangVe();
   veFlashGiaoCat();
   veButterflies();
@@ -629,6 +714,34 @@ function ve() {
 function veCoDam() {
   ctx.fillStyle = 'rgba(150,160,110,0.35)';
   for (const p of DIEM_CO) { ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill(); }
+}
+
+// mũi tên gió LEVEL — LUÔN hiện, đây là hướng gió "nền" của level
+function veGioLevel() {
+  const nuaCanh = GRID.canh / 2, doDaiMuiTen = GRID.canh * 0.42;
+  ctx.strokeStyle = 'rgba(70,110,200,0.5)'; ctx.lineWidth = 2;
+  for (let cy = 0; cy < GRID.rows; cy++) {
+    for (let cx = 0; cx < GRID.cols; cx++) {
+      const i = oIndex(cx, cy);
+      if (!coDinhLevel[i] || bChanGio[i]) continue;
+      const vx = luoiLevel[i * 2], vy = luoiLevel[i * 2 + 1];
+      const d = Math.hypot(vx, vy);
+      if (d < 1e-6) continue;
+      const tam = { x: cx * GRID.canh + nuaCanh, y: cy * GRID.canh + nuaCanh };
+      const dau = { x: tam.x + (vx / d) * doDaiMuiTen, y: tam.y + (vy / d) * doDaiMuiTen };
+      ctx.beginPath();
+      ctx.moveTo(tam.x - (vx / d) * doDaiMuiTen, tam.y - (vy / d) * doDaiMuiTen);
+      ctx.lineTo(dau.x, dau.y);
+      ctx.stroke();
+      const gocMui = Math.atan2(vy, vx);
+      ctx.beginPath();
+      ctx.moveTo(dau.x, dau.y);
+      ctx.lineTo(dau.x - Math.cos(gocMui - 0.5) * 6, dau.y - Math.sin(gocMui - 0.5) * 6);
+      ctx.moveTo(dau.x, dau.y);
+      ctx.lineTo(dau.x - Math.cos(gocMui + 0.5) * 6, dau.y - Math.sin(gocMui + 0.5) * 6);
+      ctx.stroke();
+    }
+  }
 }
 
 function veVatCan(vatCan) {
@@ -683,28 +796,18 @@ function veHatLa() {
   }
 }
 
-function veHonLoan() {
-  for (const p of state.diemHonLoanKhung) {
-    const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 70);
-    grad.addColorStop(0, 'rgba(255,255,255,0.18)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(p.x, p.y, 70, 0, Math.PI * 2); ctx.fill();
-  }
-  for (const h of state.hatBuiTamThoi) {
-    ctx.globalAlpha = 1 - h.tuoi / h.doTuoiToiDa;
-    ctx.fillStyle = 'rgba(120,140,90,0.5)';
-    ctx.beginPath(); ctx.arc(h.x, h.y, 3, 0, Math.PI * 2); ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-}
-
-function veDongGioMoDan() {
-  for (const c of state.dongGioDangHoatDong) {
-    const alpha = Math.max(0, Math.min(1, doManhHienTai(c, state.thoiGian) / c.doManhToiDa));
-    if (alpha <= 0.02) continue;
-    ctx.strokeStyle = `rgba(140,190,230,${alpha * 0.85})`;
-    ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    ctx.beginPath(); ctx.moveTo(c.duong[0].x, c.duong[0].y);
-    for (const p of c.duong) ctx.lineTo(p.x, p.y);
+// các nét gió người chơi đã vẽ — alpha giảm dần đúng theo suy hao thật
+// (đồng bộ với lưới, không phải hiệu ứng vẽ riêng)
+function veNetVeHienThi() {
+  ctx.lineWidth = 6; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const n of state.netVeHienThi) {
+    const tuoi = state.thoiGian - n.thoiDiemTao;
+    const tiLeConLai = Math.max(0, 1 - tuoi / HE_SO_LUOI.thoiGianSongNetNguoiChoi);
+    const alpha = tiLeConLai * tiLeConLai;
+    if (alpha < 0.03) continue;
+    ctx.strokeStyle = `rgba(110,160,220,${alpha * 0.8})`;
+    ctx.beginPath(); ctx.moveTo(n.duong[0].x, n.duong[0].y);
+    for (const p of n.duong) ctx.lineTo(p.x, p.y);
     ctx.stroke();
   }
 }
