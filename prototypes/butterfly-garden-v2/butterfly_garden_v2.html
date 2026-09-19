@@ -31,7 +31,9 @@
   #oMuc .nhan { font-size: 11px; font-weight: 700; color: #5b4636; text-shadow: 0 1px 2px rgba(255,255,255,0.7); }
   #thanhMucNen { width: 160px; height: 13px; border-radius: 7px; background: rgba(90,70,55,0.18); overflow: hidden; }
   #thanhMuc { height: 100%; width: 100%; background: #7fa87c; transition: width 0.15s linear, background 0.2s; }
+  #hudPhaiBoc { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; pointer-events: auto; }
   #hudPhai { font-size: 14px; font-weight: 700; color: #5b4636; text-shadow: 0 1px 2px rgba(255,255,255,0.7); }
+  #btnMucVoHan { padding: 5px 10px; font-size: 11px; }
 
   #levelSelect {
     position: absolute; top: 46px; left: 0; right: 0;
@@ -67,7 +69,10 @@
       <span class="nhan">Mực</span>
       <div id="thanhMucNen"><div id="thanhMuc"></div></div>
     </div>
-    <div id="hudPhai">0 / 0 đã đậu</div>
+    <div id="hudPhaiBoc">
+      <div id="hudPhai">0 / 0 đã đậu</div>
+      <button id="btnMucVoHan" class="nutTron">∞ Mực</button>
+    </div>
   </div>
   <div id="levelSelect">
     <button class="nutTron" data-level="1">Dễ</button>
@@ -102,6 +107,7 @@ const thanhMuc = document.getElementById('thanhMuc');
 const hudPhai = document.getElementById('hudPhai');
 const trangThaiDuoi = document.getElementById('trangThaiDuoi');
 const thongBao = document.getElementById('thongBao');
+const btnMucVoHan = document.getElementById('btnMucVoHan');
 
 const LOGICAL_W = 1080, LOGICAL_H = 1920;
 
@@ -453,7 +459,13 @@ const HE_SO = {
 const state = {
   level: 1, thoiGian: 0, mucNgan: 800, mucConLai: 800,
   buom: [], hatLa: [], netVeHienThi: [], diemFlash: null, ketQua: null,
+  mucVoHan: false, // bật để test: vẽ thoải mái không tốn mực, không thể thua vì hết mực
 };
+
+btnMucVoHan.addEventListener('click', () => {
+  state.mucVoHan = !state.mucVoHan;
+  btnMucVoHan.classList.toggle('dangChon', state.mucVoHan);
+});
 
 function taiLevel(n) {
   const cfg = CAU_HINH_LEVEL[n];
@@ -508,7 +520,7 @@ function toaDoTuSuKien(e) {
 }
 
 canvas.addEventListener('pointerdown', (e) => {
-  if (state.ketQua || dangVe || state.mucConLai <= 0) return;
+  if (state.ketQua || dangVe || (!state.mucVoHan && state.mucConLai <= 0)) return;
   e.preventDefault();
   dangVe = true; dangVeBiKhoa = false;
   duongVeHienTai = [toaDoTuSuKien(e)];
@@ -536,7 +548,7 @@ function ketThucNet() {
       // NGAY KHI VẼ XONG (nhả tay), không phải từ lúc bắt đầu chạm xuống.
       apDungNetVeVaoLuoi(duongVeHienTai, luoiNguoiChoi, coDinhNguoiChoi, thoiDiemGioNguoiChoi);
       tinhLuoiChinh();
-      state.mucConLai -= doDai;
+      if (!state.mucVoHan) state.mucConLai -= doDai;
       state.netVeHienThi.push({ duong: duongVeHienTai, thoiDiemTao: state.thoiGian });
     }
   }
@@ -665,7 +677,7 @@ function kiemTraKetThuc() {
 
   if (bayMat >= 2) { hienThiKetQua('thuaBayMat'); return; }
   if (daDau + bayMat === tong) { hienThiKetQua(bayMat === 0 ? 'thang' : 'thangMatBuom'); return; }
-  if (state.mucConLai <= 0 && daDau < tong) {
+  if (!state.mucVoHan && state.mucConLai <= 0 && daDau < tong) {
     let coNetDangSong = false;
     for (let i = 0; i < soO; i++) { if (coDinhNguoiChoi[i]) { coNetDangSong = true; break; } }
     if (!coNetDangSong) hienThiKetQua('thuaHetMuc');
@@ -860,9 +872,14 @@ function veButterflies() {
 function ve1Canh(x, y, rx, ry) { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fill(); }
 
 function capNhatHud() {
-  const tiLeMuc = Math.max(0, state.mucConLai / state.mucNgan);
-  thanhMuc.style.width = (tiLeMuc * 100).toFixed(1) + '%';
-  thanhMuc.style.background = tiLeMuc < 0.2 ? '#C96565' : '#7fa87c';
+  if (state.mucVoHan) {
+    thanhMuc.style.width = '100%';
+    thanhMuc.style.background = '#d9b04a';
+  } else {
+    const tiLeMuc = Math.max(0, state.mucConLai / state.mucNgan);
+    thanhMuc.style.width = (tiLeMuc * 100).toFixed(1) + '%';
+    thanhMuc.style.background = tiLeMuc < 0.2 ? '#C96565' : '#7fa87c';
+  }
   const daDau = state.buom.filter(b => b.trangThai === 'daDau').length;
   hudPhai.textContent = `${daDau} / ${state.buom.length} đã đậu`;
 }
