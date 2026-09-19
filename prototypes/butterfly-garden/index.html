@@ -175,6 +175,10 @@
     <input type="range" id="ts_tiLeNguoiChoiKhiChong" min="0" max="1" step="0.05">
     <div class="ghiChuNho">0 = giữ nguyên gió level (nét vẽ vô tác dụng ở ô đó) · 1 = nét vẽ đè hẳn lên level · 0.5 = cộng trung bình 2 bên</div>
   </div>
+  <div class="hangTS">
+    <label>thoiGianSongNetNguoiChoi — nét vẽ người chơi phai hết sau (giây) <span class="gtHienTai" id="gt_thoiGianSongNetNguoiChoi"></span></label>
+    <input type="range" id="ts_thoiGianSongNetNguoiChoi" min="1" max="20" step="0.5">
+  </div>
 
   <h3>Lưới ô vuông (GRID)</h3>
   <div class="hangTS">
@@ -270,7 +274,7 @@ function oTuViTri(p) {
   return { cx, cy };
 }
 
-let luoiLevel, coDinhLevel, luoiNguoiChoi, coDinhNguoiChoi, luoiChinh;
+let luoiLevel, coDinhLevel, luoiNguoiChoi, coDinhNguoiChoi, luoiChinh, thoiDiemGioNguoiChoi;
 let boDemA, boDemB; // 2 bộ đệm dùng lại khi tính lan toả, cấp phát lại nếu đổi kích thước ô
 
 function taoLuoiTrong() {
@@ -278,6 +282,7 @@ function taoLuoiTrong() {
   coDinhLevel = new Uint8Array(soO);
   luoiNguoiChoi = new Float32Array(soO * 2);
   coDinhNguoiChoi = new Uint8Array(soO);
+  thoiDiemGioNguoiChoi = new Float32Array(soO); // mốc thời gian ô này được người chơi vẽ, để suy hao dần
   luoiChinh = new Float32Array(soO * 2);
 }
 
@@ -320,6 +325,10 @@ const HE_SO_LUOI = {
   heSoLanTruyen: 0.6,    // nhận bao nhiêu từ trung bình 8 ô xung quanh
   nguongCoiLaKhong: 0.02, // độ lớn dưới mức này thì coi như lặng gió (= 0)
   buocLayMau: 8,         // (px) bước lấy mẫu dọc đường vẽ khi xấp xỉ vào lưới
+  // gió NGƯỜI CHƠI vẽ suy hao dần theo thời gian kể từ lúc vẽ XONG (nhả
+  // tay) — giống 1 nét mực phai màu, không còn cố định vĩnh viễn nữa.
+  // Gió LEVEL (chuột phải) vẫn cố định lâu dài, không suy hao.
+  thoiGianSongNetNguoiChoi: 6, // (giây) nét vẽ phai hết sau chừng này
   // khi 1 ô vừa có gió level vừa có nét người chơi vẽ đè lên: pha trộn
   // tuyến tính giữa 2 vector theo tỉ lệ này — 1 = hoàn toàn theo người chơi
   // (đè hẳn lên level, hành vi mặc định ban đầu), 0 = hoàn toàn theo level
@@ -334,13 +343,23 @@ function tinhLuoiChinh() {
   let a = boDemA, b = boDemB;
   a.fill(0); // toàn bộ ma trận xuất phát từ 0
   for (let i = 0; i < soO; i++) {
-    if (coDinhNguoiChoi[i] && coDinhLevel[i]) {
-      const t = HE_SO_LUOI.tiLeNguoiChoiKhiChong;
-      a[i * 2] = luoiNguoiChoi[i * 2] * t + luoiLevel[i * 2] * (1 - t);
-      a[i * 2 + 1] = luoiNguoiChoi[i * 2 + 1] * t + luoiLevel[i * 2 + 1] * (1 - t);
-    } else if (coDinhNguoiChoi[i]) {
-      a[i * 2] = luoiNguoiChoi[i * 2]; a[i * 2 + 1] = luoiNguoiChoi[i * 2 + 1];
-    } else if (coDinhLevel[i]) {
+    if (coDinhNguoiChoi[i]) {
+      // suy hao ease-out theo thời gian kể từ lúc vẽ xong nét này
+      const tuoi = state.thoiGian - thoiDiemGioNguoiChoi[i];
+      const tiLeConLai = Math.max(0, 1 - tuoi / HE_SO_LUOI.thoiGianSongNetNguoiChoi);
+      const heSoSuyHao = tiLeConLai * tiLeConLai;
+      if (heSoSuyHao < 0.02) {
+        coDinhNguoiChoi[i] = 0; // hết hạn hẳn — trả ô lại cho lan toả tự nhiên
+      } else if (coDinhLevel[i]) {
+        const t = HE_SO_LUOI.tiLeNguoiChoiKhiChong;
+        a[i * 2] = luoiNguoiChoi[i * 2] * heSoSuyHao * t + luoiLevel[i * 2] * (1 - t);
+        a[i * 2 + 1] = luoiNguoiChoi[i * 2 + 1] * heSoSuyHao * t + luoiLevel[i * 2 + 1] * (1 - t);
+      } else {
+        a[i * 2] = luoiNguoiChoi[i * 2] * heSoSuyHao;
+        a[i * 2 + 1] = luoiNguoiChoi[i * 2 + 1] * heSoSuyHao;
+      }
+    }
+    if (!coDinhNguoiChoi[i] && coDinhLevel[i]) {
       a[i * 2] = luoiLevel[i * 2]; a[i * 2 + 1] = luoiLevel[i * 2 + 1];
     }
   }
@@ -385,26 +404,51 @@ function gioTaiViTri(p) {
 
 // ============================================================
 // CẤU HÌNH TỪNG LEVEL — zone theo toạ độ logic tuyệt đối (px trong 1080x1920)
-// Gió level KHÔNG còn khai báo cứng ở đây nữa — mỗi level bắt đầu với
-// luoiLevel trống, tự vẽ bằng CHUỘT PHẢI ngay trên canvas lúc Thiết lập
-// (xem canvas.addEventListener('pointerdown', ...) và apDungNetVeVaoLuoi).
+// gioLevel: hướng gió MẶC ĐỊNH của level (để luôn thấy hướng gió ngay khi
+// vào level, không phải màn hình trống trơn) — người chơi vẫn vẽ THÊM
+// được bằng CHUỘT PHẢI để chỉnh/mở rộng, gió người chơi vẽ bằng chuột
+// trái/chạm thì suy hao dần (xem HE_SO_LUOI.thoiGianSongNetNguoiChoi).
 // ============================================================
 function taoZone(mau, x, y, r) { return { mau, x, y, r }; }
+
+// đặt sẵn 1 vùng chữ nhật (toạ độ logic px) thành gió cố định ban đầu của level
+function datGioLevel(x0, y0, x1, y1, huong) {
+  const h = V.chuanHoa(huong);
+  const c0 = oTuViTri({ x: x0, y: y0 }) || { cx: 0, cy: 0 };
+  const c1 = oTuViTri({ x: x1 - 1, y: y1 - 1 }) || { cx: GRID.cols - 1, cy: GRID.rows - 1 };
+  for (let cy = c0.cy; cy <= c1.cy; cy++) {
+    for (let cx = c0.cx; cx <= c1.cx; cx++) {
+      const i = oIndex(cx, cy);
+      luoiLevel[i * 2] = h.x; luoiLevel[i * 2 + 1] = h.y;
+      coDinhLevel[i] = 1;
+    }
+  }
+}
 
 const CAU_HINH_LEVEL = {
   1: {
     ten: 'Dễ',
     dsButterflyMau: ['cam', 'cam', 'cam'],
     vungHoa: [taoZone('cam', 540, 1000, 190)],
+    gioLevel: [{ x0: 0, y0: 120, x1: 1080, y1: 260, huong: { x: 0, y: 1 } }],
   },
   2: {
     ten: 'Khó',
     dsButterflyMau: ['cam', 'cam', 'tim', 'tim'],
     vungHoa: [taoZone('cam', 230, 380, 170), taoZone('tim', 850, 1540, 170)],
+    gioLevel: [
+      { x0: 0, y0: 0, x1: 160, y1: 1920, huong: { x: 1, y: 0.6 } },
+      { x0: 920, y0: 0, x1: 1080, y1: 1920, huong: { x: -1, y: -0.6 } },
+    ],
   },
   3: {
     ten: 'Siêu khó',
     dsButterflyMau: ['cam', 'cam', 'tim', 'tim', 'hong', 'hong'],
+    gioLevel: [
+      { x0: 0, y0: 700, x1: 1080, y1: 800, huong: { x: 1, y: 0 } },
+      { x0: 0, y0: 1100, x1: 1080, y1: 1200, huong: { x: -1, y: 0 } },
+      { x0: 460, y0: 0, x1: 620, y1: 400, huong: { x: 0, y: 1 } },
+    ],
     vungHoa: [
       taoZone('cam', 260, 380, 150),
       taoZone('tim', 820, 380, 150),
@@ -428,8 +472,8 @@ const state = {
 };
 
 const HE_SO = {
-  tocDoBay: 220,         // (px logic/giây) tốc độ bay khi thuận theo luồng gió
-  doNhayHuong: 3.2,      // vận tốc "bám" theo hướng gió mới nhanh hay chậm
+  tocDoBay: 260,         // (px logic/giây) tốc độ bay khi thuận theo luồng gió
+  doNhayHuong: 6,        // vận tốc "bám" theo hướng gió mới — tăng lên cho nhạy hơn
   thoiGianDauDung: 1.2,  // (giây) đứng yên trong đúng vùng hoa để "đậu"
   thoiGianBayDi: 5,      // (giây) đứng trong vùng sai màu quá lâu thì bay mất
 };
@@ -451,9 +495,10 @@ function taiLevel(levelSo) {
   state.soNetVeLevel = 0;
   state.netVeDaVe = [];
 
-  // reset lưới gió: level bắt đầu TRỐNG (không còn preset khai báo cứng) —
-  // tự vẽ gió level bằng chuột phải, vẽ gió người chơi bằng chuột trái/chạm.
+  // reset lưới gió: nạp lại hướng gió mặc định của level, người chơi vẽ
+  // thêm bằng chuột phải (gió level) hoặc chuột trái/chạm (gió người chơi).
   taoLuoiTrong();
+  for (const v of cfg.gioLevel) datGioLevel(v.x0, v.y0, v.x1, v.y1, v.huong);
   tinhLuoiChinh();
 
   state.buom = cfg.dsButterflyMau.map((mau) => {
@@ -537,11 +582,13 @@ function capNhatGiaoDien() {
 // Chỉ vẽ được ở phase 'setup' — nét vẽ xấp xỉ thành vector gió trên
 // từng ô lưới mà nó đi qua, KHÔNG đẩy bướm trực tiếp như bản cũ.
 //
-// CHUỘT TRÁI / CHẠM  -> vẽ gió NGƯỜI CHƠI (luoiNguoiChoi, cố định tới
-//                        khi bấm Play, hiện màu xanh dương nhạt).
-// CHUỘT PHẢI         -> vẽ gió LEVEL (luoiLevel, cố định lâu dài như 1
-//                        preset của level, hiện màu cam — thay cho việc
-//                        khai báo cứng toạ độ trong CAU_HINH_LEVEL).
+// CHUỘT TRÁI / CHẠM  -> vẽ gió NGƯỜI CHƠI (luoiNguoiChoi, hiện màu xanh
+//                        dương nhạt) — SUY HAO dần theo thời gian kể từ
+//                        lúc vẽ xong, hết hẳn sau HE_SO_LUOI.thoiGianSongNetNguoiChoi giây.
+// CHUỘT PHẢI         -> vẽ THÊM vào gió LEVEL (luoiLevel, cố định lâu
+//                        dài, không suy hao) — level đã có sẵn hướng gió
+//                        mặc định (xem CAU_HINH_LEVEL.gioLevel), đây chỉ
+//                        để chỉnh/mở rộng thêm.
 // ============================================================
 let dangVe = false;
 let duongVeHienTai = [];
@@ -584,7 +631,7 @@ function ketThucNetVe() {
       apDungNetVeVaoLuoi(duongVeHienTai, luoiLevel, coDinhLevel);
       state.soNetVeLevel++;
     } else {
-      apDungNetVeVaoLuoi(duongVeHienTai, luoiNguoiChoi, coDinhNguoiChoi);
+      apDungNetVeVaoLuoi(duongVeHienTai, luoiNguoiChoi, coDinhNguoiChoi, thoiDiemGioNguoiChoi);
       state.soNetVe++;
       // giữ lại nét vẽ trên màn hình, chỉ xoá khi bấm Play (xem btnPhase)
       state.netVeDaVe.push(duongVeHienTai);
@@ -599,7 +646,7 @@ function ketThucNetVe() {
 // Ghi thẳng vào luoiDich/coDinhDich được truyền vào (luoiNguoiChoi hoặc
 // luoiLevel) — gọi lại tinhLuoiChinh() ở nơi gọi hàm này, không tính
 // liên tục mỗi frame cho đỡ tốn.
-function apDungNetVeVaoLuoi(duong, luoiDich, coDinhDich) {
+function apDungNetVeVaoLuoi(duong, luoiDich, coDinhDich, thoiDiemDich) {
   const tongTheoO = new Map();
   for (let i = 0; i < duong.length - 1; i++) {
     const a = duong[i], b2 = duong[i + 1];
@@ -623,6 +670,7 @@ function apDungNetVeVaoLuoi(duong, luoiDich, coDinhDich) {
     luoiDich[i2 * 2] = tong.x / d;
     luoiDich[i2 * 2 + 1] = tong.y / d;
     coDinhDich[i2] = 1;
+    if (thoiDiemDich) thoiDiemDich[i2] = state.thoiGian; // bắt đầu tính suy hao từ đây
   }
 }
 
@@ -904,6 +952,16 @@ function vongLap(now) {
   requestAnimationFrame(vongLap);
 }
 
+// Nét vẽ người chơi suy hao dần theo thời gian NGAY CẢ KHI không vẽ nét
+// mới nào — nên phải có gì đó chủ động tính lại lưới định kỳ, không chỉ
+// khi có sự kiện (vẽ/xoá/tải level) như trước. Chọn mỗi 500ms thay vì
+// mỗi frame để đỡ tốn — vẫn đủ "liên tục" để thấy gió phai màu mượt mà.
+setInterval(() => {
+  let coNetDangSong = false;
+  for (let i = 0; i < soO; i++) { if (coDinhNguoiChoi[i]) { coNetDangSong = true; break; } }
+  if (coNetDangSong) tinhLuoiChinh();
+}, 500);
+
 // ============================================================
 // BẢNG ĐIỀU KHIỂN (#bangDieuKhien) — chỉnh trực tiếp hệ số tune, nằm
 // ngoài khung điện thoại nên không ảnh hưởng vùng chạm vẽ nét.
@@ -924,6 +982,7 @@ const KHAI_BAO_THANH_TRUOT = [
   { id: 'nguongCoiLaKhong', obj: HE_SO_LUOI, key: 'nguongCoiLaKhong', soLeSo: 3, sauKhiDoi: tinhLuoiChinh },
   { id: 'buocLayMau', obj: HE_SO_LUOI, key: 'buocLayMau', soLeSo: 0 },
   { id: 'tiLeNguoiChoiKhiChong', obj: HE_SO_LUOI, key: 'tiLeNguoiChoiKhiChong', soLeSo: 2, sauKhiDoi: tinhLuoiChinh },
+  { id: 'thoiGianSongNetNguoiChoi', obj: HE_SO_LUOI, key: 'thoiGianSongNetNguoiChoi', soLeSo: 1 },
 ];
 
 function ganThanhTruot(khaiBao) {
