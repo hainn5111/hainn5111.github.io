@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Butterfly Garden v2 - Prototype</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a1a; touch-action: none; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* Khung dọc cố định 1080x1920 (tỉ lệ điện thoại), co lại vừa màn PC */
+  #khung {
+    position: relative;
+    width: min(calc(100vw - 24px), calc((100dvh - 24px) * 1080 / 1920));
+    height: min(calc(100dvh - 24px), calc((100vw - 24px) * 1920 / 1080));
+    background: #F2E9D8;
+    overflow: hidden;
+    box-shadow: 0 0 30px rgba(0,0,0,0.4);
+  }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+  #hudTren {
+    position: absolute; top: 0; left: 0; right: 0;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 10px 14px; pointer-events: none;
+  }
+  #oMuc { display: flex; flex-direction: column; gap: 3px; }
+  #oMuc .nhan { font-size: 11px; font-weight: 700; color: #5b4636; text-shadow: 0 1px 2px rgba(255,255,255,0.7); }
+  #thanhMucNen { width: 160px; height: 13px; border-radius: 7px; background: rgba(90,70,55,0.18); overflow: hidden; }
+  #thanhMuc { height: 100%; width: 100%; background: #7fa87c; transition: width 0.15s linear, background 0.2s; }
+  #hudPhai { font-size: 14px; font-weight: 700; color: #5b4636; text-shadow: 0 1px 2px rgba(255,255,255,0.7); }
+
+  #levelSelect {
+    position: absolute; top: 46px; left: 0; right: 0;
+    display: flex; justify-content: center; gap: 8px;
+  }
+  .nutTron {
+    border: none; border-radius: 18px; padding: 7px 14px;
+    background: rgba(255,255,255,0.85); color: #5b4636;
+    font-size: 13px; font-weight: 700; box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+  .nutTron.dangChon { background: #d98e5b; color: #fff; }
+
+  #trangThaiDuoi {
+    position: absolute; bottom: 12px; left: 0; right: 0; text-align: center;
+    color: #5b4636; font-size: 13px; font-weight: 700; pointer-events: none;
+    text-shadow: 0 1px 2px rgba(255,255,255,0.7);
+  }
+
+  #thongBao {
+    position: absolute; top: 44%; left: 50%; transform: translate(-50%, -50%);
+    background: rgba(255,255,255,0.95); padding: 22px 28px; border-radius: 18px;
+    color: #5b4636; font-size: 20px; font-weight: 700; text-align: center; line-height: 1.6;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.25); display: none; max-width: 82%;
+  }
+  #thongBao button { margin-top: 14px; }
+</style>
+</head>
+<body>
+<div id="khung">
+  <canvas id="canvas"></canvas>
+  <div id="hudTren">
+    <div id="oMuc">
+      <span class="nhan">Mực</span>
+      <div id="thanhMucNen"><div id="thanhMuc"></div></div>
+    </div>
+    <div id="hudPhai">0 / 0 đã đậu</div>
+  </div>
+  <div id="levelSelect">
+    <button class="nutTron" data-level="1">Dễ</button>
+    <button class="nutTron" data-level="2">Khó</button>
+    <button class="nutTron" data-level="3">Siêu khó</button>
+  </div>
+  <div id="trangThaiDuoi"></div>
+  <div id="thongBao"></div>
+</div>
+
+<script>
+/* ============================================================
+   BUTTERFLY GARDEN v2 - prototype vật lý gió theo swipe (bản viết lại
+   toàn bộ theo spec chi tiết mới, KHÔNG dùng lưới ô vuông như bản
+   trước — đây là mô hình continuous force-field bám sát polyline nét
+   vẽ). Ưu tiên đúng vật lý hơn là đẹp. Toàn bộ hệ số ở HE_SO_VAT_LY.
+   ============================================================ */
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const khung = document.getElementById('khung');
+const thanhMuc = document.getElementById('thanhMuc');
+const hudPhai = document.getElementById('hudPhai');
+const trangThaiDuoi = document.getElementById('trangThaiDuoi');
+const thongBao = document.getElementById('thongBao');
+
+const LOGICAL_W = 1080, LOGICAL_H = 1920;
+
+function chinhKichThuoc() {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = khung.getBoundingClientRect();
+  canvas.width = Math.round(rect.width * dpr);
+  canvas.height = Math.round(rect.height * dpr);
+  const tiLe = rect.width / LOGICAL_W;
+  ctx.setTransform(tiLe * dpr, 0, 0, tiLe * dpr, 0, 0);
+}
+window.addEventListener('resize', chinhKichThuoc);
+window.addEventListener('orientationchange', chinhKichThuoc);
+chinhKichThuoc();
+
+// ---------- Vector 2D ----------
+const V = {
+  cong: (a, b) => ({ x: a.x + b.x, y: a.y + b.y }),
+  tru: (a, b) => ({ x: a.x - b.x, y: a.y - b.y }),
+  nhan: (a, k) => ({ x: a.x * k, y: a.y * k }),
+  doDai: (a) => Math.hypot(a.x, a.y),
+  chuanHoa: (a) => {
+    const d = Math.hypot(a.x, a.y);
+    return d < 1e-6 ? { x: 0, y: 0 } : { x: a.x / d, y: a.y / d };
+  },
+};
+
+function xoayVector(v, goc) {
+  const c = Math.cos(goc), s = Math.sin(goc);
+  return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
+}
+
+function gocGiuaHaiVector(u, v) {
+  const mu = Math.hypot(u.x, u.y), mv = Math.hypot(v.x, v.y);
+  if (mu < 1e-6 || mv < 1e-6) return 0;
+  const cosGoc = Math.max(-1, Math.min(1, (u.x * v.x + u.y * v.y) / (mu * mv)));
+  return Math.acos(cosGoc) * 180 / Math.PI;
+}
+
+// hash chuỗi -> số nguyên 32-bit không âm, THUẦN TUÝ (không random), dùng
+// để tạo "nhiễu loạn" xác định được (deterministic) — cùng 1 tổ hợp dòng
+// gió chồng nhau ở cùng 1 thời điểm luôn cho ra đúng 1 kết quả.
+function hash32(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h * 33) ^ str.charCodeAt(i)) >>> 0;
+  return h >>> 0;
+}
+
+// khoảng cách từ điểm p tới đoạn thẳng a-b (dùng cho occlusion bởi đá)
+function khoangCachDiemDenDoan(p, a, b) {
+  const ab = V.tru(b, a);
+  const doDaiAB2 = ab.x * ab.x + ab.y * ab.y;
+  let t = doDaiAB2 < 1e-6 ? 0 : ((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / doDaiAB2;
+  t = Math.max(0, Math.min(1, t));
+  const diem = { x: a.x + ab.x * t, y: a.y + ab.y * t };
+  return Math.hypot(p.x - diem.x, p.y - diem.y);
+}
+
+// điểm gần nhất trên toàn bộ polyline (đoạn nào gần nhất) — trả về
+// khoảng cách, hướng tiếp tuyến của đoạn đó, và hình chiếu (dùng để
+// kiểm tra occlusion bởi đá)
+function doanGanNhat(p, duong) {
+  let minD = Infinity, huong = { x: 0, y: 0 }, hinhChieu = duong[0] || { x: 0, y: 0 };
+  for (let i = 0; i < duong.length - 1; i++) {
+    const a = duong[i], b = duong[i + 1];
+    const ab = V.tru(b, a);
+    const doDaiAB2 = ab.x * ab.x + ab.y * ab.y;
+    let t = doDaiAB2 < 1e-6 ? 0 : ((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / doDaiAB2;
+    t = Math.max(0, Math.min(1, t));
+    const hc = { x: a.x + ab.x * t, y: a.y + ab.y * t };
+    const d = Math.hypot(p.x - hc.x, p.y - hc.y);
+    if (d < minD) { minD = d; huong = V.chuanHoa(ab); hinhChieu = hc; }
+  }
+  return { khoangCach: minD, huong, hinhChieu };
+}
+
+function doDaiDaThuc(duong) {
+  let tong = 0;
+  for (let i = 0; i < duong.length - 1; i++) tong += V.doDai(V.tru(duong[i + 1], duong[i]));
+  return tong;
+}
+
+// ---------- Tự cắt nét vẽ (self-intersection) ----------
+function huongDinhHuong(a, b, c) { return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x); }
+function diemTrenDoan(a, b, p) {
+  return Math.min(a.x, b.x) <= p.x && p.x <= Math.max(a.x, b.x) &&
+         Math.min(a.y, b.y) <= p.y && p.y <= Math.max(a.y, b.y);
+}
+function doanCoCat(p1, p2, p3, p4) {
+  const d1 = huongDinhHuong(p3, p4, p1), d2 = huongDinhHuong(p3, p4, p2);
+  const d3 = huongDinhHuong(p1, p2, p3), d4 = huongDinhHuong(p1, p2, p4);
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+  if (d1 === 0 && diemTrenDoan(p3, p4, p1)) return true;
+  if (d2 === 0 && diemTrenDoan(p3, p4, p2)) return true;
+  if (d3 === 0 && diemTrenDoan(p1, p2, p3)) return true;
+  if (d4 === 0 && diemTrenDoan(p1, p2, p4)) return true;
+  return false;
+}
+function doGiaoDiem(p1, p2, p3, p4) {
+  const a1 = p2.y - p1.y, b1 = p1.x - p2.x, c1 = a1 * p1.x + b1 * p1.y;
+  const a2 = p4.y - p3.y, b2 = p3.x - p4.x, c2 = a2 * p3.x + b2 * p3.y;
+  const mauSo = a1 * b2 - a2 * b1;
+  if (Math.abs(mauSo) < 1e-6) return { x: p2.x, y: p2.y };
+  return { x: (b2 * c1 - b1 * c2) / mauSo, y: (a1 * c2 - a2 * c1) / mauSo };
+}
+// bỏ qua 2 đoạn cuối cùng khi kiểm tra (tránh báo cắt nhầm ở khúc cong gấp)
+function kiemTraTuCat(duong) {
+  const n = duong.length;
+  if (n < 4) return null;
+  const moiA = duong[n - 2], moiB = duong[n - 1];
+  for (let i = 0; i <= n - 4; i++) {
+    if (doanCoCat(duong[i], duong[i + 1], moiA, moiB)) return doGiaoDiem(duong[i], duong[i + 1], moiA, moiB);
+  }
+  return null;
+}
+
+// ============================================================
+// MÀU SẮC + HỆ SỐ VẬT LÝ
+// ============================================================
+const MAU = { cam: '#E88A5E', tim: '#9B7BB8', do: '#C96565', vang: '#D9B04A' };
+const MAU_BUI = '#A4B896', MAU_DA = '#7A7566';
+
+const HE_SO_VAT_LY = {
+  banKinhAnhHuong: 100,     // R (px) — bán kính ảnh hưởng của mỗi điểm trên nét gió
+  doManhMoiPx: 0.8,         // hệ số: 1px chiều dài nét vẽ góp bao nhiêu vào độ mạnh tối đa
+  doManhToiDaTran: 420,     // trần độ mạnh tối đa (chặn nét quá dài văng bướm)
+  thoiGianSongGio: 4,       // (giây) LIFETIME của 1 dòng gió
+  heSoGiam: 8,              // hệ số damping: van = lerp(van, gioMucTieu, dt*heSoGiam)
+  nguongManhChaos: 0.3,     // "dòng mạnh" = độ mạnh hiện tại > 30% độ mạnh tối đa của nó
+  nguongFalloffChaos: 0.3,  // và falloff theo khoảng cách > 0.3
+  gocChaosToiThieu: 60,     // (độ) góc giữa 2 dòng mạnh vượt mức này -> hỗn loạn
+  bienDoJitter: 15,         // (độ) biên độ dao động jitter khi hỗn loạn
+  donViHutHoa: 200,         // đơn vị quy đổi cho "0.3 strength" hút của hoa dại
+};
+
+function doManhHienTai(dong, now) {
+  const tuoi = now - dong.thoiDiemTao;
+  if (tuoi < 0 || tuoi >= dong.thoiGianSong) return 0;
+  const tiLe = Math.max(0, 1 - tuoi / dong.thoiGianSong);
+  return dong.doManhToiDa * tiLe * tiLe; // ease-out: pow(1-age/life, 2)
+}
+
+function bBiChanBoiDa(pA, pB, vatCan) {
+  return vatCan.some(o => o.loai === 'da' && khoangCachDiemDenDoan(o, pA, pB) < o.r);
+}
+
+// tổng lực gió từ CÁC DÒNG GIÓ (chưa gồm gió nền) tại 1 vị trí, và có
+// đang ở "vùng hỗn loạn" hay không (từ ≥2 dòng mạnh chéo hướng nhau)
+function tongGioTaiViTri(p, now, vatCan) {
+  let tong = { x: 0, y: 0 };
+  const manhs = [];
+  for (const c of state.dongGioDangHoatDong) {
+    const doManhGoc = doManhHienTai(c, now);
+    if (doManhGoc <= 0) continue;
+    const { khoangCach, huong, hinhChieu } = doanGanNhat(p, c.duong);
+    const falloff = Math.max(0, 1 - khoangCach / HE_SO_VAT_LY.banKinhAnhHuong);
+    if (falloff <= 0) continue;
+    if (bBiChanBoiDa(hinhChieu, p, vatCan)) continue; // đá chắn gió (wind shadow)
+    const doManhTaiDiem = doManhGoc * falloff;
+    tong = V.cong(tong, V.nhan(huong, doManhTaiDiem));
+    if (doManhGoc > HE_SO_VAT_LY.nguongManhChaos * c.doManhToiDa && falloff > HE_SO_VAT_LY.nguongFalloffChaos) {
+      manhs.push({ huong, id: c.id });
+    }
+  }
+  let honLoan = false;
+  for (let i = 0; i < manhs.length && !honLoan; i++) {
+    for (let j = i + 1; j < manhs.length; j++) {
+      if (gocGiuaHaiVector(manhs[i].huong, manhs[j].huong) > HE_SO_VAT_LY.gocChaosToiThieu) { honLoan = true; break; }
+    }
+  }
+  return { tong, honLoan, manhs };
+}
+
+// jitter xác định (deterministic): hash(id các dòng đang chồng + thời
+// gian) -> pha + tần số dao động riêng cho tổ hợp đó. KHÔNG dùng
+// Math.random ở đây — lặp lại đúng swipe ở đúng thời điểm ra đúng kết quả.
+function jitterGoc(manhs, now) {
+  const chuoi = manhs.map(m => m.id).sort((a, b) => a - b).join(',');
+  const h = hash32(chuoi);
+  const pha = (h % 6283) / 1000;
+  const tanSo = 2 + (h % 300) / 100;
+  const bienDo = HE_SO_VAT_LY.bienDoJitter * Math.PI / 180;
+  return Math.sin(now * tanSo + pha) * bienDo;
+}
+
+// ============================================================
+// VA CHẠM VẬT CẢN (bụi cây + đá chặn bướm, đá còn chặn cả gió ở trên)
+// ============================================================
+function vaChamVatCan(b, o) {
+  const dx = b.vi.x - o.x, dy = b.vi.y - o.y;
+  const d = Math.hypot(dx, dy);
+  if (d < o.r && d > 1e-6) {
+    const nx = dx / d, ny = dy / d;
+    b.vi.x = o.x + nx * (o.r + 1);
+    b.vi.y = o.y + ny * (o.r + 1);
+    const vaoTrong = b.van.x * nx + b.van.y * ny;
+    if (vaoTrong < 0) { b.van.x -= vaoTrong * nx; b.van.y -= vaoTrong * ny; } // trượt quanh rìa
+  }
+}
+
+// ============================================================
+// SINH VỊ TRÍ BƯỚM
+// ============================================================
+function viTriTrongCum(tam, banKinh) {
+  const goc = Math.random() * Math.PI * 2;
+  const r = Math.random() * banKinh;
+  return { x: tam.x + Math.cos(goc) * r, y: tam.y + Math.sin(goc) * r };
+}
+function viTriNgauNhienTranh(vungHoa, vatCan, hop) {
+  for (let thu = 0; thu < 40; thu++) {
+    const p = { x: hop.x0 + Math.random() * (hop.x1 - hop.x0), y: hop.y0 + Math.random() * (hop.y1 - hop.y0) };
+    const okVung = vungHoa.every(z => Math.hypot(p.x - z.x, p.y - z.y) > z.r + 60);
+    const okVatCan = vatCan.every(o => Math.hypot(p.x - o.x, p.y - o.y) > o.r + 50);
+    if (okVung && okVatCan) return p;
+  }
+  return { x: (hop.x0 + hop.x1) / 2, y: (hop.y0 + hop.y1) / 2 };
+}
+
+// ============================================================
+// CẤU HÌNH 3 LEVEL — toạ độ tuyệt đối trong hệ 1080x1920
+// ============================================================
+function gioNenTai(t, gioNen) {
+  if (gioNen.kieu === 'tinh') return gioNen.vector;
+  return { x: Math.sin(t * Math.PI / 4) * gioNen.bienDo, y: 0 }; // đảo chiều mỗi 4s
+}
+
+const CAU_HINH_LEVEL = {
+  1: {
+    ten: 'Dễ', tenHienThi: 'Sáng đầu tiên', mucNgan: 800,
+    gioNen: { kieu: 'tinh', vector: { x: 0, y: 35 } },
+    vungHoa: [{ mau: 'cam', x: 540, y: 1550, r: 190 }],
+    vatCan: [],
+    taoButterflies() {
+      const tam = { x: 540, y: 300 };
+      return ['cam', 'cam', 'cam'].map(mau => ({ mau, viGoc: viTriTrongCum(tam, 130) }));
+    },
+  },
+  2: {
+    ten: 'Khó', tenHienThi: 'Vườn gió chéo', mucNgan: 600,
+    gioNen: { kieu: 'tinh', vector: { x: 110, y: 0 } },
+    vungHoa: [{ mau: 'cam', x: 230, y: 340, r: 170 }, { mau: 'do', x: 850, y: 1580, r: 170 }],
+    vatCan: [],
+    taoButterflies() {
+      const tam = { x: 540, y: 960 };
+      return ['cam', 'cam', 'cam', 'do', 'do', 'do'].map(mau => ({ mau, viGoc: viTriTrongCum(tam, 170) }));
+    },
+  },
+  3: {
+    ten: 'Siêu khó', tenHienThi: 'Sau tảng đá', mucNgan: 500,
+    gioNen: { kieu: 'daoDong', bienDo: 85 },
+    vungHoa: [
+      { mau: 'cam', x: 220, y: 300, r: 140 }, { mau: 'tim', x: 860, y: 300, r: 140 },
+      { mau: 'do', x: 220, y: 1650, r: 140 }, { mau: 'vang', x: 860, y: 1650, r: 140 },
+    ],
+    vatCan: [{ loai: 'da', x: 800, y: 950, r: 120 }, { loai: 'hoa', x: 480, y: 1020, r: 80 }],
+    taoButterflies(cfg) {
+      const hop = { x0: 180, y0: 520, x1: 900, y1: 1420 };
+      return ['cam', 'cam', 'tim', 'tim', 'do', 'do', 'vang', 'vang'].map(mau =>
+        ({ mau, viGoc: viTriNgauNhienTranh(cfg.vungHoa, cfg.vatCan, hop) }));
+    },
+  },
+};
+
+const DIEM_CO = Array.from({ length: 160 }, () => ({
+  x: Math.random() * LOGICAL_W, y: Math.random() * LOGICAL_H, r: 1 + Math.random() * 1.4,
+}));
+
+// ============================================================
+// TRẠNG THÁI GAME
+// ============================================================
+const state = {
+  level: 1, thoiGian: 0, mucNgan: 800, mucConLai: 800,
+  dongGioDangHoatDong: [], idGioTiepTheo: 1,
+  buom: [], hatLa: [], hatBuiTamThoi: [], diemHonLoanKhung: [],
+  diemFlash: null, ketQua: null,
+};
+
+function taiLevel(n) {
+  const cfg = CAU_HINH_LEVEL[n];
+  state.level = n;
+  state.thoiGian = 0;
+  state.mucNgan = cfg.mucNgan;
+  state.mucConLai = cfg.mucNgan;
+  state.dongGioDangHoatDong = [];
+  state.idGioTiepTheo = 1;
+  state.hatBuiTamThoi = [];
+  state.diemHonLoanKhung = [];
+  state.diemFlash = null;
+  state.ketQua = null;
+  dangVe = false; dangVeBiKhoa = false; duongVeHienTai = [];
+
+  state.buom = cfg.taoButterflies(cfg).map(({ mau, viGoc }) => ({
+    mau, vi: { ...viGoc }, van: { x: 0, y: 0 }, goc: Math.random() * Math.PI * 2,
+    phaCanh: Math.random() * 10, trangThai: 'tuDo', dwellDung: 0, dwellSai: 0,
+    hoaDangHut: null, thoiGianHut: 0, coolDownHoa: 0, bayMatBatDau: 0, anHien: 1,
+  }));
+
+  state.hatLa = Array.from({ length: 44 }, () => ({
+    x: Math.random() * LOGICAL_W, y: Math.random() * LOGICAL_H,
+    goc: Math.random() * Math.PI * 2, tocDoXoay: (Math.random() - 0.5) * 1.2,
+  }));
+
+  document.querySelectorAll('#levelSelect button').forEach(btn => {
+    btn.classList.toggle('dangChon', Number(btn.dataset.level) === n);
+  });
+  thongBao.style.display = 'none';
+  trangThaiDuoi.textContent = cfg.tenHienThi;
+}
+
+document.querySelectorAll('#levelSelect button').forEach(btn => {
+  btn.addEventListener('click', () => taiLevel(Number(btn.dataset.level)));
+});
+
+// ============================================================
+// INPUT — Pointer Events (touch + mouse), 1 điểm chạm duy nhất
+// ============================================================
+let dangVe = false, dangVeBiKhoa = false, duongVeHienTai = [];
+
+function toaDoTuSuKien(e) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - rect.left) / rect.width * LOGICAL_W,
+    y: (e.clientY - rect.top) / rect.height * LOGICAL_H,
+  };
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+  if (state.ketQua || dangVe || state.mucConLai <= 0) return;
+  e.preventDefault();
+  dangVe = true; dangVeBiKhoa = false;
+  duongVeHienTai = [toaDoTuSuKien(e)];
+  canvas.setPointerCapture(e.pointerId);
+});
+
+canvas.addEventListener('pointermove', (e) => {
+  if (!dangVe || dangVeBiKhoa) return;
+  e.preventDefault();
+  duongVeHienTai.push(toaDoTuSuKien(e));
+  const giao = kiemTraTuCat(duongVeHienTai);
+  if (giao) { dangVeBiKhoa = true; state.diemFlash = { x: giao.x, y: giao.y, thoiGian: state.thoiGian }; }
+});
+
+canvas.addEventListener('pointerup', (e) => { e.preventDefault(); ketThucNet(); });
+canvas.addEventListener('pointercancel', () => { ketThucNet(); });
+
+function ketThucNet() {
+  if (!dangVe) return;
+  dangVe = false;
+  if (duongVeHienTai.length >= 3) {
+    const doDai = doDaiDaThuc(duongVeHienTai);
+    if (doDai > 1) {
+      const doManhToiDa = Math.min(HE_SO_VAT_LY.doManhToiDaTran, doDai * HE_SO_VAT_LY.doManhMoiPx);
+      state.dongGioDangHoatDong.push({
+        id: state.idGioTiepTheo++, duong: duongVeHienTai, doDaiDuong: doDai,
+        doManhToiDa, thoiDiemTao: state.thoiGian, thoiGianSong: HE_SO_VAT_LY.thoiGianSongGio,
+      });
+      state.mucConLai -= doDai; // cho phép âm nếu nét cuối cùng vượt ngân — sẽ trừ sao khi tính kết quả
+    }
+  }
+  duongVeHienTai = [];
+  dangVeBiKhoa = false;
+}
+
+// ============================================================
+// CẬP NHẬT DWELL / TRẠNG THÁI VÒNG ĐỜI BƯỚM
+// ============================================================
+function capNhatDwell(b, cfg, dt) {
+  const zone = cfg.vungHoa.find(z => Math.hypot(b.vi.x - z.x, b.vi.y - z.y) < z.r);
+  if (zone && zone.mau === b.mau) {
+    b.dwellDung += dt; b.dwellSai = 0; b.trangThai = 'dungHoa';
+    if (b.dwellDung >= 2) {
+      b.trangThai = 'daDau';
+      b.vi = { x: zone.x, y: zone.y };
+      b.van = { x: 0, y: 0 };
+    }
+  } else if (zone && zone.mau !== b.mau) {
+    b.dwellSai += dt; b.dwellDung = 0; b.trangThai = 'saiHoa';
+    if (b.dwellSai >= 5) { b.trangThai = 'bayMat'; b.bayMatBatDau = state.thoiGian; }
+  } else {
+    b.dwellDung = 0; b.dwellSai = 0; b.trangThai = 'tuDo';
+  }
+}
+
+// ============================================================
+// VÒNG LẶP VẬT LÝ
+// ============================================================
+function capNhat(dt) {
+  if (state.ketQua) return;
+  state.thoiGian += dt;
+
+  state.dongGioDangHoatDong = state.dongGioDangHoatDong.filter(c => state.thoiGian - c.thoiDiemTao < c.thoiGianSong);
+
+  const cfg = CAU_HINH_LEVEL[state.level];
+  const gioNenHienTai = gioNenTai(state.thoiGian, cfg.gioNen);
+  state.diemHonLoanKhung = [];
+
+  for (const b of state.buom) {
+    if (b.trangThai === 'daDau') { b.phaCanh += dt * 1.2; continue; }
+    if (b.trangThai === 'bayMat') {
+      const tuoi = state.thoiGian - b.bayMatBatDau;
+      b.vi.y -= dt * 60;
+      b.anHien = Math.max(0, 1 - tuoi / 1.2);
+      continue;
+    }
+
+    if (b.hoaDangHut) {
+      b.thoiGianHut += dt; b.phaCanh += dt * 2;
+      if (b.thoiGianHut >= 3) { b.hoaDangHut = null; b.thoiGianHut = 0; b.coolDownHoa = 2; }
+      capNhatDwell(b, cfg, dt);
+      continue;
+    }
+    if (b.coolDownHoa > 0) b.coolDownHoa = Math.max(0, b.coolDownHoa - dt);
+
+    const { tong, honLoan, manhs } = tongGioTaiViTri(b.vi, state.thoiGian, cfg.vatCan);
+    let luc = V.cong(gioNenHienTai, tong);
+
+    let batDauHutHoa = null;
+    for (const o of cfg.vatCan) {
+      if (o.loai !== 'hoa') continue;
+      const d = Math.hypot(b.vi.x - o.x, b.vi.y - o.y);
+      if (d < 18 && b.coolDownHoa <= 0) { batDauHutHoa = o; break; }
+      if (d < o.r) {
+        const h = d < 1e-6 ? { x: 0, y: 0 } : { x: (o.x - b.vi.x) / d, y: (o.y - b.vi.y) / d };
+        luc = V.cong(luc, V.nhan(h, 0.3 * HE_SO_VAT_LY.donViHutHoa));
+      }
+    }
+
+    if (honLoan) {
+      state.diemHonLoanKhung.push({ x: b.vi.x, y: b.vi.y });
+      if (Math.random() < 0.3) {
+        state.hatBuiTamThoi.push({ x: b.vi.x + (Math.random() - 0.5) * 30, y: b.vi.y + (Math.random() - 0.5) * 30, tuoi: 0, doTuoiToiDa: 0.6 });
+      }
+      luc = xoayVector(luc, jitterGoc(manhs, state.thoiGian));
+    }
+
+    if (batDauHutHoa) {
+      b.hoaDangHut = batDauHutHoa; b.thoiGianHut = 0; b.van = { x: 0, y: 0 };
+    } else {
+      const nhay = Math.min(1, dt * HE_SO_VAT_LY.heSoGiam);
+      b.van.x += (luc.x - b.van.x) * nhay;
+      b.van.y += (luc.y - b.van.y) * nhay;
+      b.vi = V.cong(b.vi, V.nhan(b.van, dt));
+
+      for (const o of cfg.vatCan) { if (o.loai !== 'hoa') vaChamVatCan(b, o); }
+      b.vi.x = Math.max(10, Math.min(LOGICAL_W - 10, b.vi.x));
+      b.vi.y = Math.max(10, Math.min(LOGICAL_H - 10, b.vi.y));
+      if (V.doDai(b.van) > 4) b.goc = Math.atan2(b.van.y, b.van.x);
+      b.phaCanh += dt * (5 + Math.min(V.doDai(b.van) / 30, 8));
+    }
+
+    capNhatDwell(b, cfg, dt);
+  }
+
+  for (const h of state.hatBuiTamThoi) h.tuoi += dt;
+  state.hatBuiTamThoi = state.hatBuiTamThoi.filter(h => h.tuoi < h.doTuoiToiDa);
+
+  capNhatHatLa(dt, gioNenHienTai);
+  kiemTraKetThuc();
+}
+
+function capNhatHatLa(dt, gioNen) {
+  for (const la of state.hatLa) {
+    const { tong } = tongGioTaiViTri(la, state.thoiGian, []);
+    const gio = V.cong(gioNen, tong);
+    la.x += gio.x * dt * 0.35;
+    la.y += gio.y * dt * 0.35;
+    la.goc += la.tocDoXoay * dt;
+    if (la.x < -20) la.x = LOGICAL_W + 20; if (la.x > LOGICAL_W + 20) la.x = -20;
+    if (la.y < -20) la.y = LOGICAL_H + 20; if (la.y > LOGICAL_H + 20) la.y = -20;
+  }
+}
+
+function tinhSoSao(daDung, mucNgan) {
+  const tiLe = daDung / mucNgan;
+  if (tiLe <= 0.6) return 3;
+  if (tiLe <= 0.9) return 2;
+  if (tiLe <= 1.0) return 1;
+  return 0;
+}
+
+function kiemTraKetThuc() {
+  if (state.ketQua) return;
+  const tong = state.buom.length;
+  const daDau = state.buom.filter(b => b.trangThai === 'daDau').length;
+  const bayMat = state.buom.filter(b => b.trangThai === 'bayMat').length;
+
+  if (bayMat >= 2) { hienThiKetQua('thuaBayMat'); return; }
+  if (daDau + bayMat === tong) { hienThiKetQua(bayMat === 0 ? 'thang' : 'thangMatBuom'); return; }
+  if (state.mucConLai <= 0 && state.dongGioDangHoatDong.length === 0 && daDau < tong) {
+    hienThiKetQua('thuaHetMuc');
+  }
+}
+
+function hienThiKetQua(loai) {
+  state.ketQua = loai;
+  let noiDung;
+  if (loai === 'thang') {
+    const daDung = state.mucNgan - state.mucConLai;
+    const sao = state.mucConLai < 0 ? 0 : tinhSoSao(daDung, state.mucNgan);
+    noiDung = `${'⭐'.repeat(sao)}${'☆'.repeat(3 - sao)}<br>Hoàn thành! Đã dùng ${Math.round(daDung / state.mucNgan * 100)}% mực.`;
+  } else if (loai === 'thangMatBuom') {
+    noiDung = 'Hoàn thành, nhưng có 1 bướm đã bay mất...';
+  } else if (loai === 'thuaBayMat') {
+    noiDung = 'Thất bại — 2 bướm đã bay mất khỏi vườn rồi.';
+  } else {
+    noiDung = 'Thất bại — hết mực mà vẫn còn bướm chưa đậu hoa.';
+  }
+  thongBao.innerHTML = noiDung + '<br><button id="btnChoiLai" class="nutTron">Chơi lại</button>';
+  thongBao.style.display = 'block';
+  document.getElementById('btnChoiLai').addEventListener('click', () => taiLevel(state.level));
+}
+
+// ============================================================
+// VẼ
+// ============================================================
+function ve() {
+  ctx.clearRect(0, 0, LOGICAL_W, LOGICAL_H);
+  ctx.fillStyle = '#F2E9D8';
+  ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+  const cfg = CAU_HINH_LEVEL[state.level];
+  veCoDam();
+  veVatCan(cfg.vatCan);
+  veVungHoa(cfg.vungHoa);
+  veHatLa();
+  veHonLoan();
+  veDongGioMoDan();
+  if (dangVe) veNetDangVe();
+  veFlashGiaoCat();
+  veButterflies();
+}
+
+function veCoDam() {
+  ctx.fillStyle = 'rgba(150,160,110,0.35)';
+  for (const p of DIEM_CO) { ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill(); }
+}
+
+function veVatCan(vatCan) {
+  for (const o of vatCan) {
+    if (o.loai === 'bui') {
+      ctx.fillStyle = MAU_BUI;
+      ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(o.x - o.r * 0.4, o.y + o.r * 0.3, o.r * 0.6, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(o.x + o.r * 0.5, o.y + o.r * 0.2, o.r * 0.5, 0, Math.PI * 2); ctx.fill();
+    } else if (o.loai === 'da') {
+      ctx.fillStyle = 'rgba(0,0,0,0.15)';
+      ctx.beginPath(); ctx.ellipse(o.x + 8, o.y + 14, o.r * 0.95, o.r * 0.75, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = MAU_DA;
+      ctx.beginPath(); ctx.ellipse(o.x, o.y, o.r, o.r * 0.85, 0, 0, Math.PI * 2); ctx.fill();
+    } else if (o.loai === 'hoa') {
+      const nhip = Math.sin(state.thoiGian * 2) * 0.5 + 0.5;
+      const mauCanh = ['#E88A5E', '#9B7BB8', '#D9B04A', '#C96565'];
+      for (let i = 0; i < 5; i++) {
+        const goc = (i / 5) * Math.PI * 2, r = 14 + nhip * 3;
+        ctx.fillStyle = mauCanh[i % mauCanh.length];
+        ctx.beginPath(); ctx.arc(o.x + Math.cos(goc) * r, o.y + Math.sin(goc) * r, 6 + nhip * 2, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.fillStyle = '#5b4636';
+      ctx.beginPath(); ctx.arc(o.x, o.y, 5, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+}
+
+function veVungHoa(vungHoa) {
+  for (const z of vungHoa) {
+    const grad = ctx.createRadialGradient(z.x, z.y, 0, z.x, z.y, z.r);
+    grad.addColorStop(0, MAU[z.mau] + '55'); grad.addColorStop(1, MAU[z.mau] + '00');
+    ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2); ctx.fill();
+
+    ctx.setLineDash([6, 6]); ctx.strokeStyle = MAU[z.mau]; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+
+    for (let i = 0; i < 6; i++) {
+      const goc = (i / 6) * Math.PI * 2, r2 = z.r * 0.5;
+      ctx.fillStyle = MAU[z.mau];
+      ctx.beginPath(); ctx.arc(z.x + Math.cos(goc) * r2, z.y + Math.sin(goc) * r2, 5, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+}
+
+function veHatLa() {
+  ctx.fillStyle = 'rgba(120,140,90,0.55)';
+  for (const la of state.hatLa) {
+    ctx.save(); ctx.translate(la.x, la.y); ctx.rotate(la.goc);
+    ctx.beginPath(); ctx.ellipse(0, 0, 7, 3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+function veHonLoan() {
+  for (const p of state.diemHonLoanKhung) {
+    const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 70);
+    grad.addColorStop(0, 'rgba(255,255,255,0.18)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(p.x, p.y, 70, 0, Math.PI * 2); ctx.fill();
+  }
+  for (const h of state.hatBuiTamThoi) {
+    ctx.globalAlpha = 1 - h.tuoi / h.doTuoiToiDa;
+    ctx.fillStyle = 'rgba(120,140,90,0.5)';
+    ctx.beginPath(); ctx.arc(h.x, h.y, 3, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function veDongGioMoDan() {
+  for (const c of state.dongGioDangHoatDong) {
+    const alpha = Math.max(0, Math.min(1, doManhHienTai(c, state.thoiGian) / c.doManhToiDa));
+    if (alpha <= 0.02) continue;
+    ctx.strokeStyle = `rgba(140,190,230,${alpha * 0.85})`;
+    ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(c.duong[0].x, c.duong[0].y);
+    for (const p of c.duong) ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+  }
+}
+
+function veNetDangVe() {
+  if (duongVeHienTai.length < 2) return;
+  ctx.strokeStyle = dangVeBiKhoa ? 'rgba(201,101,101,0.8)' : 'rgba(90,170,220,0.85)';
+  ctx.lineWidth = 6; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(duongVeHienTai[0].x, duongVeHienTai[0].y);
+  for (const p of duongVeHienTai) ctx.lineTo(p.x, p.y);
+  ctx.stroke();
+}
+
+function veFlashGiaoCat() {
+  if (!state.diemFlash) return;
+  const tuoi = state.thoiGian - state.diemFlash.thoiGian;
+  if (tuoi > 0.4) { state.diemFlash = null; return; }
+  ctx.strokeStyle = `rgba(255,255,255,${1 - tuoi / 0.4})`; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(state.diemFlash.x, state.diemFlash.y, 8 + tuoi * 40, 0, Math.PI * 2); ctx.stroke();
+}
+
+function veButterflies() {
+  for (const b of state.buom) {
+    if (b.trangThai === 'bayMat' && b.anHien <= 0) continue;
+    ctx.save();
+    ctx.globalAlpha = b.trangThai === 'bayMat' ? b.anHien : 1;
+    ctx.translate(b.vi.x, b.vi.y);
+    ctx.rotate(b.goc);
+
+    const vo = Math.sin(b.phaCanh) * 0.5 + 0.5;
+    const doMoCanh = 10 + vo * 10;
+    ctx.fillStyle = MAU[b.mau];
+    ve1Canh(-doMoCanh, -13, 16, 10); ve1Canh(-doMoCanh, 13, 16, 10);
+    ve1Canh(doMoCanh, -13, 16, 10); ve1Canh(doMoCanh, 13, 16, 10);
+
+    ctx.fillStyle = '#4a3b2f';
+    ctx.beginPath(); ctx.ellipse(0, 0, 5, 13, 0, 0, Math.PI * 2); ctx.fill();
+
+    if (b.trangThai === 'daDau') {
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, 26, 0, Math.PI * 2); ctx.stroke();
+    }
+    if (b.hoaDangHut) {
+      ctx.strokeStyle = 'rgba(255,220,140,0.7)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, 20, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+function ve1Canh(x, y, rx, ry) { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fill(); }
+
+function capNhatHud() {
+  const tiLeMuc = Math.max(0, state.mucConLai / state.mucNgan);
+  thanhMuc.style.width = (tiLeMuc * 100).toFixed(1) + '%';
+  thanhMuc.style.background = tiLeMuc < 0.2 ? '#C96565' : '#7fa87c';
+  const daDau = state.buom.filter(b => b.trangThai === 'daDau').length;
+  hudPhai.textContent = `${daDau} / ${state.buom.length} đã đậu`;
+}
+
+// ============================================================
+// VÒNG LẶP CHÍNH
+// ============================================================
+let thoiGianKhungHinhTruoc = performance.now();
+function vongLap(now) {
+  const dt = Math.min((now - thoiGianKhungHinhTruoc) / 1000, 0.05);
+  thoiGianKhungHinhTruoc = now;
+  capNhat(dt);
+  ve();
+  capNhatHud();
+  requestAnimationFrame(vongLap);
+}
+
+taiLevel(1);
+requestAnimationFrame(vongLap);
+</script>
+</body>
+</html>
